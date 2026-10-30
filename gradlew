@@ -9,16 +9,18 @@ if [ ! -f "$PROPERTIES_FILE" ]; then
   exit 1
 fi
 
-DIST_URL="$(sed -n 's/^distributionUrl=//p' "$PROPERTIES_FILE" | head -n 1 | sed 's/\\:/:/g; s/\\\\/\\/g')"
+# distributionUrl pada Java properties meng-escape titik dua sebagai \:.
+# Cukup ubah \: menjadi :; tidak perlu manipulasi backslash lain.
+DIST_URL="$(sed -n 's/^distributionUrl=//p' "$PROPERTIES_FILE" | head -n 1 | sed 's/\\:/:/g')"
+
 if [ -z "$DIST_URL" ]; then
-  echo "ERROR: distributionUrl tidak ditemukan." >&2
+  echo "ERROR: distributionUrl tidak ditemukan di $PROPERTIES_FILE." >&2
   exit 1
 fi
 
 ZIP_NAME="${DIST_URL##*/}"
 ARCHIVE_NAME="${ZIP_NAME%.zip}"
-# Nama folder di dalam ZIP Gradle tidak memakai akhiran -bin atau -all.
-DIST_NAME="$(printf '%s' "$ARCHIVE_NAME" | sed -E 's/-(bin|all|src)$/')"
+DIST_NAME="$(printf '%s' "$ARCHIVE_NAME" | sed -E 's/-(bin|all|src)$//')"
 GRADLE_USER_HOME="${GRADLE_USER_HOME:-$HOME/.gradle}"
 CACHE_DIR="$GRADLE_USER_HOME/manual-distributions"
 INSTALL_DIR="$CACHE_DIR/$DIST_NAME"
@@ -41,14 +43,12 @@ if [ ! -x "$GRADLE_BIN" ]; then
     mv "$TMP_ZIP" "$ZIP_PATH"
   fi
 
-  echo "Mengekstrak Gradle ke: $INSTALL_DIR"
-  mkdir -p "$INSTALL_DIR"
+  echo "Mengekstrak Gradle ke: $CACHE_DIR"
   unzip -q -o "$ZIP_PATH" -d "$CACHE_DIR"
 fi
 
 if [ ! -x "$GRADLE_BIN" ]; then
   echo "ERROR: Gradle tidak ditemukan setelah ekstraksi: $GRADLE_BIN" >&2
-  echo "Isi folder cache:" >&2
   ls -la "$CACHE_DIR" >&2 || true
   exit 1
 fi

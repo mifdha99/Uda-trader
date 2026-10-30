@@ -1,18 +1,12 @@
-PERBAIKAN V2 — PATH EKSTRAKSI GRADLE
+PERBAIKAN V3
 
-Ganti gradlew dan gradlew.bat di root repository dengan versi dari paket ini.
-Ganti juga .github/workflows/android-build.yml jika workflow sebelumnya belum sama.
+Error V2 berasal dari ekspresi sed kedua yang salah sintaks. V3 menghapus ekspresi tersebut. Launcher hanya mengubah escape `\:` menjadi `:` pada distributionUrl, lalu menggunakan Gradle 9.3.1 dan folder hasil ekstraksi `gradle-9.3.1`.
 
-Penyebab error sebelumnya:
-Nama arsip adalah gradle-9.3.1-bin.zip, tetapi nama folder hasil ekstraksi di dalam ZIP adalah gradle-9.3.1. Launcher lama keliru menganggap foldernya bernama gradle-9.3.1-bin.
+Ganti file berikut di repository:
+- gradlew (root)
+- gradlew.bat (root)
+- .github/workflows/android-build.yml
 
-Versi ini memisahkan nama arsip dan nama folder hasil ekstraksi. File gradle-wrapper.properties tetap dipakai apa adanya; distributionUrl saat ini menunjuk Gradle 9.3.1.
+Jangan ubah gradle/wrapper/gradle-wrapper.properties. Commit perubahan dan jalankan ulang GitHub Actions.
 
-Langkah:
-1. Ekstrak ZIP ini.
-2. Upload/ganti gradlew dan gradlew.bat di root repository.
-3. Ganti .github/workflows/android-build.yml.
-4. Commit ke main.
-5. Jalankan ulang GitHub Actions.
-
-Jika langkah Verify Gradle lolos tetapi assembleDebug gagal, kirim log mulai dari baris FAILURE: atau What went wrong. Itu berarti masalah berikutnya sudah berada pada konfigurasi/dependensi/kode proyek, bukan launcher Gradle.
+Jika Verify Gradle lolos dan build selanjutnya gagal, kirim bagian log `FAILURE:` dan `What went wrong:`.
