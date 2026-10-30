@@ -32,6 +32,39 @@ enum class ConfirmationType {
     }
 }
 
+/**
+ * Standard MT5 Timeframes
+ */
+enum class Mt5Timeframe(val code: String, val displayName: String, val seconds: Long) {
+    M1("M1", "1 Menit", 60),
+    M5("M5", "5 Menit", 300),
+    M15("M15", "15 Menit", 900),
+    M30("M30", "30 Menit", 1800),
+    H1("H1", "1 Jam", 3600),
+    H4("H4", "4 Jam", 14400),
+    D1("D1", "Harian", 86400),
+    W1("W1", "Mingguan", 604800),
+    MN1("MN1", "Bulanan", 2592000);
+
+    companion object {
+        fun fromCode(code: String?): Mt5Timeframe {
+            val clean = code?.trim()?.uppercase() ?: return M5
+            return values().firstOrNull { it.code == clean } ?: M5
+        }
+    }
+}
+
+data class TechnicalMetrics(
+    val fastEma: Double? = null,
+    val slowEma: Double? = null,
+    val rsi: Double? = null,
+    val atr: Double? = null,
+    val supportLevel: Double? = null,
+    val resistanceLevel: Double? = null,
+    val candlePattern: String = "Normal",
+    val candleCount: Int = 0
+)
+
 data class TradingSignal(
     val id: Long = 0,
     val signal: SignalType,
@@ -41,11 +74,12 @@ data class TradingSignal(
     val stopLoss: Double?,
     val takeProfit: Double?,
     val riskReward: String?,
-    val confidence: Double?, // null if not calibrated
+    val confidence: Double?, // 0.0 - 100.0%
     val trend: String,
     val confirmation: ConfirmationType,
     val reason: String,
-    val timestamp: String
+    val timestamp: String,
+    val metrics: TechnicalMetrics = TechnicalMetrics()
 ) {
     fun displaySignalText(): String {
         return when (signal) {
@@ -53,6 +87,10 @@ data class TradingSignal(
             SignalType.SELL -> "SELL NOW"
             SignalType.WAIT -> "WAIT"
         }
+    }
+
+    fun formattedConfidence(): String {
+        return confidence?.let { String.format("%.0f%%", it) } ?: "0%"
     }
 }
 
@@ -69,17 +107,14 @@ data class RiskSettings(
 
     /**
      * Calculates estimated lot size based on risk and stop loss distance.
-     * Disclaimer: Assumes standard pip values (e.g. 1 pip = $10 per standard lot in EURUSD).
-     * Instruments like Gold (XAUUSD), Indices, or Crypto have different pip values.
      */
     fun calculateEstimatedLot(): Double {
         if (stopLossPips <= 0) return 0.0
-        // Forex standard: 1 pip = $10 / lot for standard accounts (EURUSD base)
         val pipValuePerLot = when (instrumentType) {
-            "Gold (XAUUSD)" -> 10.0 // 0.10 move = $10 on 1 lot
+            "Gold (XAUUSD)" -> 10.0
             "Crypto (BTCUSD)" -> 1.0
             "Index (US30/NAS100)" -> 1.0
-            else -> 10.0 // Forex
+            else -> 10.0
         }
         val totalRiskPerLot = stopLossPips * pipValuePerLot
         if (totalRiskPerLot <= 0) return 0.0

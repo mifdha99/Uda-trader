@@ -1,12 +1,14 @@
 package com.example.ui.screens
 
+import android.content.ClipData
+import android.content.ClipboardManager
+import android.content.Context
+import android.widget.Toast
 import androidx.compose.animation.AnimatedVisibility
-import androidx.compose.animation.animateColorAsState
-import androidx.compose.animation.fadeIn
-import androidx.compose.animation.fadeOut
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -25,38 +27,36 @@ import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.filled.AutoAwesome
 import androidx.compose.material.icons.filled.CameraAlt
-import androidx.compose.material.icons.filled.CheckCircle
+import androidx.compose.material.icons.filled.ContentCopy
 import androidx.compose.material.icons.filled.Info
 import androidx.compose.material.icons.filled.Layers
 import androidx.compose.material.icons.filled.PlayArrow
 import androidx.compose.material.icons.filled.Refresh
+import androidx.compose.material.icons.filled.ShowChart
 import androidx.compose.material.icons.filled.Stop
-import androidx.compose.material.icons.filled.Warning
 import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.CircularProgressIndicator
-import androidx.compose.material3.FilterChip
-import androidx.compose.material3.FilterChipDefaults
 import androidx.compose.material3.Icon
 import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
-import androidx.compose.runtime.getValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.example.model.ConfirmationType
+import com.example.model.Mt5Timeframe
 import com.example.model.SignalType
 import com.example.model.TradingSignal
 import com.example.ui.theme.CyanAccent
@@ -64,7 +64,6 @@ import com.example.ui.theme.DarkBorder
 import com.example.ui.theme.DarkSurface
 import com.example.ui.theme.NeonAmber
 import com.example.ui.theme.NeonAmberGlow
-import com.example.ui.theme.NeonCyan
 import com.example.ui.theme.NeonGreen
 import com.example.ui.theme.NeonGreenGlow
 import com.example.ui.theme.NeonRed
@@ -73,6 +72,7 @@ import com.example.ui.theme.Slate400
 import com.example.ui.theme.Slate800
 import com.example.ui.theme.Slate900
 import com.example.ui.theme.Slate950
+import java.util.Locale
 
 @OptIn(ExperimentalLayoutApi::class)
 @Composable
@@ -82,8 +82,9 @@ fun CockpitScreen(
     isAnalyzing: Boolean,
     statusMessage: String,
     isFloatingOverlayVisible: Boolean,
+    activeTimeframe: Mt5Timeframe,
     selectedInterval: Int,
-    selectedModel: String,
+    onTimeframeSelected: (Mt5Timeframe) -> Unit,
     onStartCapture: () -> Unit,
     onStopCapture: () -> Unit,
     onToggleFloatingOverlay: () -> Unit,
@@ -92,6 +93,7 @@ fun CockpitScreen(
     modifier: Modifier = Modifier
 ) {
     val scrollState = rememberScrollState()
+    val tfScrollState = rememberScrollState()
 
     Column(
         modifier = modifier
@@ -116,7 +118,7 @@ fun CockpitScreen(
                     letterSpacing = 1.sp
                 )
                 Text(
-                    text = "Institutional MT5 Chart Vision Engine",
+                    text = "Universal Signal Engine (On-Device MT5)",
                     color = CyanAccent,
                     fontSize = 12.sp,
                     fontWeight = FontWeight.Medium
@@ -132,12 +134,71 @@ fun CockpitScreen(
                     .padding(horizontal = 10.dp, vertical = 6.dp)
             ) {
                 Text(
-                    text = selectedModel.uppercase(),
-                    color = CyanAccent,
+                    text = "LOCAL ENGINE",
+                    color = NeonGreen,
                     fontSize = 10.sp,
                     fontWeight = FontWeight.Bold,
                     fontFamily = FontFamily.Monospace
                 )
+            }
+        }
+
+        // Section 4: TIMEFRAME SELECTOR (MT5 Style)
+        Card(
+            modifier = Modifier.fillMaxWidth(),
+            colors = CardDefaults.cardColors(containerColor = DarkSurface),
+            shape = RoundedCornerShape(14.dp),
+            border = androidx.compose.foundation.BorderStroke(1.dp, DarkBorder)
+        ) {
+            Column(modifier = Modifier.padding(12.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.SpaceBetween,
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Text(
+                        text = "TIMEFRAME ACUAN ANALISIS",
+                        color = Slate400,
+                        fontSize = 11.sp,
+                        fontWeight = FontWeight.Bold,
+                        letterSpacing = 0.8.sp
+                    )
+                    Text(
+                        text = "AKTIF: ${activeTimeframe.code} (${activeTimeframe.displayName})",
+                        color = CyanAccent,
+                        fontSize = 11.sp,
+                        fontWeight = FontWeight.Bold
+                    )
+                }
+
+                // Horizontal scrollable chips for all 9 MT5 Timeframes
+                Row(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .horizontalScroll(tfScrollState),
+                    horizontalArrangement = Arrangement.spacedBy(6.dp)
+                ) {
+                    Mt5Timeframe.values().forEach { tf ->
+                        val isSelected = activeTimeframe == tf
+                        Box(
+                            modifier = Modifier
+                                .clip(RoundedCornerShape(8.dp))
+                                .background(if (isSelected) CyanAccent else Slate900)
+                                .border(1.dp, if (isSelected) CyanAccent else DarkBorder, RoundedCornerShape(8.dp))
+                                .clickable { onTimeframeSelected(tf) }
+                                .padding(horizontal = 12.dp, vertical = 8.dp),
+                            contentAlignment = Alignment.Center
+                        ) {
+                            Text(
+                                text = tf.code,
+                                color = if (isSelected) Color.Black else Color.White,
+                                fontWeight = FontWeight.Bold,
+                                fontSize = 12.sp,
+                                fontFamily = FontFamily.Monospace
+                            )
+                        }
+                    }
+                }
             }
         }
 
@@ -150,7 +211,7 @@ fun CockpitScreen(
         ) {
             Column(modifier = Modifier.padding(14.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
                 Text(
-                    text = "STATUS SISTEM REAL-TIME",
+                    text = "STATUS PEMANTAUAN REAL-TIME",
                     color = Slate400,
                     fontSize = 11.sp,
                     fontWeight = FontWeight.Bold,
@@ -164,17 +225,17 @@ fun CockpitScreen(
                     StatusPill(
                         label = "Screen Capture",
                         active = isCapturing,
-                        activeText = "RECORDING",
+                        activeText = "MONITORING 1s",
                         inactiveText = "STOPPED",
                         icon = Icons.Default.CameraAlt
                     )
 
                     StatusPill(
-                        label = "Gemini Engine",
+                        label = "Universal Engine",
                         active = isAnalyzing,
-                        activeText = "ANALYZING",
-                        inactiveText = "STANDBY",
-                        icon = Icons.Default.AutoAwesome
+                        activeText = "SCANNING",
+                        inactiveText = "READY",
+                        icon = Icons.Default.ShowChart
                     )
 
                     StatusPill(
@@ -186,7 +247,7 @@ fun CockpitScreen(
                     )
                 }
 
-                // Live status text
+                // Status message bar
                 Row(
                     modifier = Modifier
                         .fillMaxWidth()
@@ -214,7 +275,8 @@ fun CockpitScreen(
                         text = statusMessage,
                         color = Color.White,
                         fontSize = 12.sp,
-                        fontWeight = FontWeight.Normal
+                        fontWeight = FontWeight.Normal,
+                        lineHeight = 16.sp
                     )
                 }
             }
@@ -235,7 +297,7 @@ fun CockpitScreen(
                 verticalArrangement = Arrangement.spacedBy(14.dp)
             ) {
                 Text(
-                    text = "KONTROL ANALISIS & OVERLAY",
+                    text = "KONTROL PEMANTAUAN MT5",
                     color = Slate400,
                     fontSize = 11.sp,
                     fontWeight = FontWeight.Bold,
@@ -264,7 +326,7 @@ fun CockpitScreen(
                     ) {
                         Icon(Icons.Default.PlayArrow, contentDescription = null, modifier = Modifier.size(20.dp))
                         Spacer(modifier = Modifier.width(6.dp))
-                        Text("MULAI ANALISIS", fontWeight = FontWeight.Bold, fontSize = 13.sp)
+                        Text("MULAI PEMANTAUAN", fontWeight = FontWeight.Bold, fontSize = 12.sp)
                     }
 
                     Button(
@@ -284,7 +346,7 @@ fun CockpitScreen(
                     ) {
                         Icon(Icons.Default.Stop, contentDescription = null, modifier = Modifier.size(20.dp))
                         Spacer(modifier = Modifier.width(6.dp))
-                        Text("BERHENTI", fontWeight = FontWeight.Bold, fontSize = 13.sp)
+                        Text("BERHENTI", fontWeight = FontWeight.Bold, fontSize = 12.sp)
                     }
                 }
 
@@ -310,10 +372,10 @@ fun CockpitScreen(
                     )
                 }
 
-                // Interval Selection
+                // Target Interval Selection
                 Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
                     Text(
-                        text = "Interval Pengambilan Layar:",
+                        text = "Frekuensi Pemindaian Layar:",
                         color = Color.White,
                         fontSize = 12.sp,
                         fontWeight = FontWeight.Medium
@@ -363,7 +425,7 @@ fun CockpitScreen(
                     Icon(Icons.Default.Refresh, contentDescription = null, tint = CyanAccent, modifier = Modifier.size(16.dp))
                     Spacer(modifier = Modifier.width(8.dp))
                     Text(
-                        text = "Uji Coba Analisis Frame Chart Sampel",
+                        text = "Uji Coba Universal Engine dengan Chart Sampel MT5",
                         color = CyanAccent,
                         fontSize = 12.sp,
                         fontWeight = FontWeight.SemiBold
@@ -376,6 +438,7 @@ fun CockpitScreen(
 
 @Composable
 fun LiveSignalHeroCard(signal: TradingSignal?, isAnalyzing: Boolean) {
+    val context = LocalContext.current
     val signalType = signal?.signal ?: SignalType.WAIT
     val (signalColor, badgeBg, signalText) = when (signalType) {
         SignalType.BUY -> Triple(NeonGreen, NeonGreenGlow, "🟢 BUY NOW")
@@ -404,7 +467,7 @@ fun LiveSignalHeroCard(signal: TradingSignal?, isAnalyzing: Boolean) {
             ) {
                 Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                     Text(
-                        text = signal?.pair ?: "MT5 SCANNER",
+                        text = signal?.pair ?: "MT5 VISUAL",
                         color = Color.White,
                         fontSize = 18.sp,
                         fontWeight = FontWeight.Black,
@@ -452,14 +515,14 @@ fun LiveSignalHeroCard(signal: TradingSignal?, isAnalyzing: Boolean) {
                 }
             }
 
-            // Big Signal Visual Banner
+            // Big Signal Visual Banner + Confidence Score
             Box(
                 modifier = Modifier
                     .fillMaxWidth()
                     .clip(RoundedCornerShape(14.dp))
                     .background(badgeBg)
                     .border(1.5.dp, signalColor.copy(alpha = 0.7f), RoundedCornerShape(14.dp))
-                    .padding(vertical = 16.dp),
+                    .padding(vertical = 14.dp),
                 contentAlignment = Alignment.Center
             ) {
                 Column(horizontalAlignment = Alignment.CenterHorizontally) {
@@ -471,23 +534,35 @@ fun LiveSignalHeroCard(signal: TradingSignal?, isAnalyzing: Boolean) {
                         letterSpacing = 2.sp
                     )
 
-                    val confirmation = signal?.confirmation ?: ConfirmationType.UNCONFIRMED
                     Spacer(modifier = Modifier.height(4.dp))
-                    Text(
-                        text = when (confirmation) {
-                            ConfirmationType.CONFIRMED -> "✓ STRUKTUR TERKONFIRMASI (BOS / OB / FVG)"
-                            ConfirmationType.PENDING -> "⏳ PENDING / MENUNGGU CLOSE CANDLE"
-                            ConfirmationType.UNCONFIRMED -> "PEMANTAUAN PASAR"
-                        },
-                        color = when (confirmation) {
-                            ConfirmationType.CONFIRMED -> Color(0xFF34D399)
-                            ConfirmationType.PENDING -> Color(0xFFFBBF24)
-                            ConfirmationType.UNCONFIRMED -> Slate400
-                        },
-                        fontSize = 10.sp,
-                        fontWeight = FontWeight.Bold,
-                        letterSpacing = 0.5.sp
-                    )
+
+                    Row(
+                        horizontalArrangement = Arrangement.spacedBy(8.dp),
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Text(
+                            text = "CONFIDENCE: ${signal?.formattedConfidence() ?: "0%"}",
+                            color = Color.White,
+                            fontSize = 12.sp,
+                            fontWeight = FontWeight.Bold
+                        )
+
+                        val confirmation = signal?.confirmation ?: ConfirmationType.UNCONFIRMED
+                        Text(
+                            text = when (confirmation) {
+                                ConfirmationType.CONFIRMED -> "• TERKONFIRMASI"
+                                ConfirmationType.PENDING -> "• PENDING CLOSE"
+                                ConfirmationType.UNCONFIRMED -> "• EVALUASI"
+                            },
+                            color = when (confirmation) {
+                                ConfirmationType.CONFIRMED -> Color(0xFF34D399)
+                                ConfirmationType.PENDING -> Color(0xFFFBBF24)
+                                ConfirmationType.UNCONFIRMED -> Slate400
+                            },
+                            fontSize = 11.sp,
+                            fontWeight = FontWeight.Bold
+                        )
+                    }
                 }
             }
 
@@ -502,17 +577,17 @@ fun LiveSignalHeroCard(signal: TradingSignal?, isAnalyzing: Boolean) {
             ) {
                 PriceMetricColumn(
                     label = "ENTRY",
-                    value = signal?.entry?.let { String.format("%.5f", it) } ?: "---",
+                    value = signal?.entry?.let { String.format(Locale.US, "%.5f", it) } ?: "---",
                     valueColor = CyanAccent
                 )
                 PriceMetricColumn(
                     label = "STOP LOSS",
-                    value = signal?.stopLoss?.let { String.format("%.5f", it) } ?: "---",
+                    value = signal?.stopLoss?.let { String.format(Locale.US, "%.5f", it) } ?: "---",
                     valueColor = NeonRed
                 )
                 PriceMetricColumn(
                     label = "TAKE PROFIT",
-                    value = signal?.takeProfit?.let { String.format("%.5f", it) } ?: "---",
+                    value = signal?.takeProfit?.let { String.format(Locale.US, "%.5f", it) } ?: "---",
                     valueColor = NeonGreen
                 )
                 PriceMetricColumn(
@@ -522,34 +597,101 @@ fun LiveSignalHeroCard(signal: TradingSignal?, isAnalyzing: Boolean) {
                 )
             }
 
-            // Detailed Technical Reason from Gemini AI
+            // Technical Indicators Breakdown (EMA, RSI, ATR, Pattern)
+            signal?.metrics?.let { m ->
+                if (m.rsi != null || m.fastEma != null) {
+                    Row(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .clip(RoundedCornerShape(10.dp))
+                            .background(Slate900)
+                            .padding(10.dp),
+                        horizontalArrangement = Arrangement.SpaceBetween
+                    ) {
+                        m.fastEma?.let {
+                            IndicatorMiniBadge(label = "EMA 9", value = String.format(Locale.US, "%.5f", it))
+                        }
+                        m.slowEma?.let {
+                            IndicatorMiniBadge(label = "EMA 21", value = String.format(Locale.US, "%.5f", it))
+                        }
+                        m.rsi?.let {
+                            val rsiColor = when {
+                                it > 70.0 -> NeonRed
+                                it < 30.0 -> NeonAmber
+                                else -> CyanAccent
+                            }
+                            IndicatorMiniBadge(label = "RSI 14", value = String.format(Locale.US, "%.1f", it), valueColor = rsiColor)
+                        }
+                        m.atr?.let {
+                            IndicatorMiniBadge(label = "ATR", value = String.format(Locale.US, "%.5f", it))
+                        }
+                    }
+                }
+            }
+
+            // Detailed Technical Reason & COPY Button
             Column(
                 modifier = Modifier
                     .fillMaxWidth()
                     .clip(RoundedCornerShape(10.dp))
                     .background(Slate900)
                     .padding(12.dp),
-                verticalArrangement = Arrangement.spacedBy(6.dp)
+                verticalArrangement = Arrangement.spacedBy(8.dp)
             ) {
-                Row(verticalAlignment = Alignment.CenterVertically) {
-                    Icon(
-                        imageVector = Icons.Default.Info,
-                        contentDescription = null,
-                        tint = CyanAccent,
-                        modifier = Modifier.size(14.dp)
-                    )
-                    Spacer(modifier = Modifier.width(6.dp))
-                    Text(
-                        text = "ANALISIS TEKNIKAL & STRUKTUR PASAR:",
-                        color = Slate400,
-                        fontSize = 10.sp,
-                        fontWeight = FontWeight.Bold,
-                        letterSpacing = 0.5.sp
-                    )
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.SpaceBetween,
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        Icon(
+                            imageVector = Icons.Default.Info,
+                            contentDescription = null,
+                            tint = CyanAccent,
+                            modifier = Modifier.size(14.dp)
+                        )
+                        Spacer(modifier = Modifier.width(6.dp))
+                        Text(
+                            text = "ANALISIS UNIVERSAL ENGINE:",
+                            color = Slate400,
+                            fontSize = 10.sp,
+                            fontWeight = FontWeight.Bold,
+                            letterSpacing = 0.5.sp
+                        )
+                    }
+
+                    // COPY Button
+                    Button(
+                        onClick = {
+                            val entryStr = signal?.entry?.let { String.format(Locale.US, "%.5f", it) } ?: "---"
+                            val slStr = signal?.stopLoss?.let { String.format(Locale.US, "%.5f", it) } ?: "---"
+                            val tpStr = signal?.takeProfit?.let { String.format(Locale.US, "%.5f", it) } ?: "---"
+                            val clipText = "UDA AI TRADER [$signalText]\nPair: ${signal?.pair ?: "MT5"} | TF: ${signal?.timeframe ?: "M5"}\nEntry: $entryStr\nSL: $slStr\nTP: $tpStr\nRisk Reward: ${signal?.riskReward ?: "1:2"}\nConfidence: ${signal?.formattedConfidence() ?: "0%"}"
+
+                            val clipboard = context.getSystemService(Context.CLIPBOARD_SERVICE) as ClipboardManager
+                            clipboard.setPrimaryClip(ClipData.newPlainText("UdaTraderSignal", clipText))
+                            Toast.makeText(context, "Sinyal disalin ke Clipboard!", Toast.LENGTH_SHORT).show()
+                        },
+                        colors = ButtonDefaults.buttonColors(containerColor = CyanAccent),
+                        shape = RoundedCornerShape(6.dp),
+                        contentPadding = androidx.compose.foundation.layout.PaddingValues(horizontal = 8.dp, vertical = 4.dp),
+                        modifier = Modifier
+                            .height(26.dp)
+                            .testTag("copy_signal_button")
+                    ) {
+                        Icon(
+                            imageVector = Icons.Default.ContentCopy,
+                            contentDescription = "Copy",
+                            tint = Color.Black,
+                            modifier = Modifier.size(12.dp)
+                        )
+                        Spacer(modifier = Modifier.width(4.dp))
+                        Text("COPY SINYAL", color = Color.Black, fontWeight = FontWeight.Bold, fontSize = 10.sp)
+                    }
                 }
 
                 Text(
-                    text = signal?.reason ?: "Belum ada analisis yang dilakukan. Tekan 'MULAI ANALISIS' atau buka MetaTrader 5.",
+                    text = signal?.reason ?: "Universal Engine siap. Tekan 'MULAI PEMANTAUAN' dan buka MetaTrader 5.",
                     color = Color.White,
                     fontSize = 12.sp,
                     lineHeight = 18.sp
@@ -557,7 +699,7 @@ fun LiveSignalHeroCard(signal: TradingSignal?, isAnalyzing: Boolean) {
 
                 if (!signal?.timestamp.isNullOrBlank()) {
                     Text(
-                        text = "Waktu Analisis: ${signal?.timestamp}",
+                        text = "Waktu Pembaruan: ${signal?.timestamp}",
                         color = Slate400,
                         fontSize = 10.sp,
                         fontFamily = FontFamily.Monospace
@@ -565,6 +707,14 @@ fun LiveSignalHeroCard(signal: TradingSignal?, isAnalyzing: Boolean) {
                 }
             }
         }
+    }
+}
+
+@Composable
+private fun IndicatorMiniBadge(label: String, value: String, valueColor: Color = Color.White) {
+    Column(horizontalAlignment = Alignment.CenterHorizontally) {
+        Text(text = label, color = Slate400, fontSize = 9.sp, fontWeight = FontWeight.SemiBold)
+        Text(text = value, color = valueColor, fontSize = 11.sp, fontWeight = FontWeight.Bold, fontFamily = FontFamily.Monospace)
     }
 }
 

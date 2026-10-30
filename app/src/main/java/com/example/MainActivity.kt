@@ -163,7 +163,6 @@ fun MainAppContainer(
     val signalHistory by viewModel.signalHistory.collectAsState()
     val settings by viewModel.settings.collectAsState()
     val riskSettings by viewModel.riskSettings.collectAsState()
-    val connectionTestStatus by viewModel.connectionTestStatus.collectAsState()
 
     Scaffold(
         modifier = Modifier.fillMaxSize(),
@@ -216,8 +215,9 @@ fun MainAppContainer(
                     isAnalyzing = isAnalyzing,
                     statusMessage = statusMessage,
                     isFloatingOverlayVisible = isFloatingOverlayVisible,
+                    activeTimeframe = settings.activeTimeframe,
                     selectedInterval = settings.intervalSeconds,
-                    selectedModel = settings.selectedModel,
+                    onTimeframeSelected = { viewModel.updateTimeframe(it) },
                     onStartCapture = onRequestStartCapture,
                     onStopCapture = { viewModel.stopScreenCapture() },
                     onToggleFloatingOverlay = onRequestFloatingOverlay,
@@ -247,13 +247,12 @@ fun MainAppContainer(
             TraderNavTab.SETTINGS -> {
                 SettingsScreen(
                     settings = settings,
-                    connectionTestStatus = connectionTestStatus,
-                    onUpdateGeminiKey = { viewModel.updateGeminiApiKey(it) },
-                    onUpdateModel = { viewModel.updateModel(it) },
+                    onUpdateTimeframe = { viewModel.updateTimeframe(it) },
+                    onUpdateInterval = { viewModel.updateInterval(it) },
+                    onUpdateRiskReward = { viewModel.updatePreferredRiskReward(it) },
                     onUpdateVibration = { viewModel.updateVibration(it) },
                     onUpdateSound = { viewModel.updateSound(it) },
-                    onTestConnection = { viewModel.testConnection() },
-                    onClearTestStatus = { viewModel.clearConnectionTestStatus() },
+                    onResetOverlayPosition = { viewModel.resetOverlayPosition() },
                     modifier = Modifier.padding(innerPadding)
                 )
             }

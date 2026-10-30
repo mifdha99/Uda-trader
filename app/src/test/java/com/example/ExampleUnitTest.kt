@@ -1,11 +1,13 @@
 package com.example
 
-import com.example.data.api.SignalValidator
+import com.example.data.engine.Candlestick
+import com.example.data.engine.TechnicalIndicators
 import com.example.model.ConfirmationType
+import com.example.model.Mt5Timeframe
 import com.example.model.RiskSettings
 import com.example.model.SignalType
 import org.junit.Assert.assertEquals
-import org.junit.Assert.assertNull
+import org.junit.Assert.assertFalse
 import org.junit.Assert.assertTrue
 import org.junit.Test
 import org.junit.runner.RunWith
@@ -17,49 +19,64 @@ import org.robolectric.annotation.Config
 class ExampleUnitTest {
 
     @Test
-    fun testSignalValidatorWithValidBuyJson() {
-        val sampleJson = """
-        {
-          "signal": "BUY",
-          "pair": "EURUSD",
-          "timeframe": "M5",
-          "entry": 1.08500,
-          "stop_loss": 1.08400,
-          "take_profit": 1.08700,
-          "risk_reward": "1:2",
-          "confidence": null,
-          "trend": "BULLISH",
-          "confirmation": "CONFIRMED",
-          "reason": "Institutional order block tap with bullish engulfing",
-          "timestamp": "2026-10-30T16:00:00Z"
-        }
-        """.trimIndent()
-
-        val result = SignalValidator.parseAndValidate(sampleJson)
-        assertTrue(result.isSuccess)
-        val signal = result.getOrThrow()
-
-        assertEquals(SignalType.BUY, signal.signal)
-        assertEquals("EURUSD", signal.pair)
-        assertEquals("M5", signal.timeframe)
-        assertEquals(1.08500, signal.entry!!, 0.00001)
-        assertEquals(1.08400, signal.stopLoss!!, 0.00001)
-        assertEquals(1.08700, signal.takeProfit!!, 0.00001)
-        assertEquals("1:2", signal.riskReward)
-        assertNull(signal.confidence) // Mandatory confidence: null rule
-        assertEquals(ConfirmationType.CONFIRMED, signal.confirmation)
+    fun testTechnicalIndicatorsEMA() {
+        val prices = listOf(10.0, 11.0, 12.0, 13.0, 14.0, 15.0, 16.0, 17.0, 18.0, 19.0)
+        val ema = TechnicalIndicators.calculateEMA(prices, 5)
+        assertEquals(prices.size, ema.size)
+        // With rising prices, EMA should track upwards
+        assertTrue(ema.last() > ema.first())
     }
 
     @Test
-    fun testSignalValidatorHandlesMarkdownWrappingGracefully() {
-        val wrappedJson = "```json\n{\"signal\":\"SELL\",\"pair\":\"GBPUSD\",\"timeframe\":\"M15\",\"confirmation\":\"PENDING\",\"reason\":\"Liquidity sweep at resistance\"}\n```"
-        val result = SignalValidator.parseAndValidate(wrappedJson)
-        assertTrue(result.isSuccess)
-        val signal = result.getOrThrow()
+    fun testTechnicalIndicatorsRSI() {
+        // Strong upward price momentum should have RSI > 60
+        val bullPrices = (1..20).map { 1.08000 + (it * 0.00050) }
+        val rsiBull = TechnicalIndicators.calculateRSI(bullPrices, 14)
+        assertTrue("RSI should be high on strong bullish move, got $rsiBull", rsiBull > 70.0)
 
-        assertEquals(SignalType.SELL, signal.signal)
-        assertEquals("GBPUSD", signal.pair)
-        assertEquals(ConfirmationType.PENDING, signal.confirmation)
+        // Strong downward price momentum should have RSI < 35
+        val bearPrices = (1..20).map { 1.09000 - (it * 0.00050) }
+        val rsiBear = TechnicalIndicators.calculateRSI(bearPrices, 14)
+        assertTrue("RSI should be low on strong bearish move, got $rsiBear", rsiBear < 30.0)
+    }
+
+    @Test
+    fun testCandlestickPatterns() {
+        // Bullish Hammer: lower wick >= 2x body, small upper wick
+        val hammer = Candlestick(
+            index = 0,
+            open = 1.08200,
+            close = 1.08250,
+            high = 1.08260,
+            low = 1.08050
+        )
+        assertTrue("Candle should be recognized as hammer", hammer.isHammer())
+
+        // Bullish Engulfing
+        val prevRed = Candlestick(
+            index = 0,
+            open = 1.08500,
+            close = 1.08400,
+            high = 1.08520,
+            low = 1.08380
+        )
+        val currGreen = Candlestick(
+            index = 1,
+            open = 1.08390,
+            close = 1.08550,
+            high = 1.08560,
+            low = 1.08380
+        )
+        assertTrue("Should be bullish engulfing", TechnicalIndicators.isBullishEngulfing(prevRed, currGreen))
+    }
+
+    @Test
+    fun testMt5TimeframeCodes() {
+        assertEquals(Mt5Timeframe.M1, Mt5Timeframe.fromCode("M1"))
+        assertEquals(Mt5Timeframe.M5, Mt5Timeframe.fromCode("m5"))
+        assertEquals(Mt5Timeframe.H1, Mt5Timeframe.fromCode("H1"))
+        assertEquals(Mt5Timeframe.D1, Mt5Timeframe.fromCode("D1"))
+        assertEquals(Mt5Timeframe.M5, Mt5Timeframe.fromCode("UNKNOWN"))
     }
 
     @Test

@@ -1,50 +1,60 @@
 # UDA AI TRADER - Native Android Application
 
-Aplikasi Android native institusional untuk analisis real-time chart **MetaTrader 5 (MT5)** menggunakan **Android MediaProjection API**, **SYSTEM_ALERT_WINDOW (Floating Window)**, dan **Google Gemini Vision AI Engine** langsung dari perangkat tanpa backend sendiri.
+Aplikasi Android native institusional untuk analisis real-time chart **MetaTrader 5 (MT5)** menggunakan **Android MediaProjection API**, **SYSTEM_ALERT_WINDOW (Floating Window)**, dan **Universal Signal Engine** yang berjalan 100% secara lokal pada perangkat tanpa Gemini AI dan tanpa backend.
 
 ---
 
 ## 🚀 Fitur Utama
 
-1. **Standalone Direct Gemini Vision AI (Tanpa Backend Sendiri)**
-   - Mengirim screenshot chart MT5 langsung ke Google Generative Language REST API (`gemini-1.5-flash`, `gemini-2.0-flash`, `gemini-1.5-pro`).
-   - Tidak memerlukan VPS, Node.js server, Cloud Functions, atau server perantara apapun.
-   - Penanganan error komprehensif: deteksi offline, timeout jaringan, kuota rate limit (429), dan autentikasi (401/403).
-   - Anti-Halusinasi: Menampilkan sinyal `WAIT` jika chart tidak terbaca atau kondisi market sideways tanpa konfirmasi. Tidak pernah mengarang harga Entry, SL, atau TP.
+1. **Universal Signal Engine (100% Lokal di Android)**
+   - Algoritma analisis teknikal kuantitatif on-device:
+     - **EMA 9 & EMA 21**: Menentukan arah tren utama dan deteksi Golden / Death Cross.
+     - **RSI 14 (Wilder Smoothed)**: Membaca momentum pasar dan memfilter overbought (>70) serta oversold (<30).
+     - **ATR 14 (Average True Range)**: Mengukur volatilitas dinamis untuk penentuan Stop Loss dan Take Profit.
+     - **Support & Resistance**: Deteksi zona pantulan dari swing high/low pivots.
+     - **Price Action & Candle Confirmation**: Pengenalan pola Hammer, Shooting Star, Bullish/Bearish Engulfing, dan Strong Marubozu.
+     - **Deterministic Confidence Scoring**: Skor keyakinan terkalibrasi (0% - 100%) berdasarkan konfluensi multi-indikator terukur (bukan angka acak).
+     - **Sinyal**: BUY NOW, SELL NOW, atau WAIT (jika kondisi pasar tidak memenuhi kriteria konfluensi $\ge 70\%$). Tidak pernah mengarang harga.
 
-2. **Screen Capture Berkala (MediaProjection API)**
-   - Mengambil tampilan layar MetaTrader 5 secara berkala (interval 1s, 2s, 3s, atau 5s).
-   - Berjalan pada **Foreground Service** dengan notifikasi transparan sesuai standar Android 8 s/d Android 16 (`FOREGROUND_SERVICE_TYPE_MEDIA_PROJECTION`).
-   - Kompresi JPEG dinamis (maksimum dimensi 1280px) untuk kecepatan analisis dan efisiensi kuota.
+2. **Screen Capture Real-Time MT5 (MediaProjection API)**
+   - Membaca chart MetaTrader 5 secara otomatis setiap 1 detik melalui Android Foreground Service (`FOREGROUND_SERVICE_TYPE_MEDIA_PROJECTION`).
+   - Modul **Visual Chart Recognition**:
+     - Memindai candlestick bullish (hijau) dan bearish (merah).
+     - Menentukan posisi Open, High, Low, Close, wick, dan body candle.
+     - Memetakan skala harga sumbu vertikal.
+     - Deteksi validitas chart: jika layar bukan chart MT5 (misal menu, loading, blank), sistem mengeluarkan status `WAIT: DATA CHART TIDAK VALID`.
 
-3. **Floating Window (HUD Overlay di Atas MetaTrader 5)**
-   - Menggunakan izin `SYSTEM_ALERT_WINDOW`.
-   - Mengambang langsung di atas MetaTrader 5:
-     - 🟢 **BUY NOW**
-     - 🔴 **SELL NOW**
-     - 🟡 **WAIT**
-     - Parameter: PAIR, TIMEFRAME, ENTRY, STOP LOSS, TAKE PROFIT, RISK REWARD.
-   - Draggable (dapat digeser ke mana saja) dan Minimizable (dapat diciutkan ke pill ringkas agar tidak menutupi tombol MT5).
-   - Tombol cepat **COPY** untuk menyalin parameter order ke clipboard.
+3. **Pilihan Timeframe Standar MT5**
+   - 9 pilihan timeframe standar: **M1, M5, M15, M30, H1, H4, D1, W1, MN1**.
+   - Pengguna dapat memilih langsung dari UI Cockpit maupun Pengaturan.
+   - Pilihan timeframe tersimpan otomatis di preferensi lokal.
+   - Peringatan otomatis jika timeframe aplikasi berbeda dengan tampilan MT5.
 
-4. **Sistem Sinyal Real-Time Cerdas**
-   - Mendeteksi transisi arah (BUY $\leftrightarrow$ SELL).
-   - Membedakan sinyal terkonfirmasi (`CONFIRMED`) vs pending (`PENDING`).
-   - Mencegah duplikasi sinyal identik berulang.
+4. **Floating Window (HUD Overlay di Atas MetaTrader 5)**
+   - Mengambang langsung di atas MetaTrader 5 (`SYSTEM_ALERT_WINDOW`).
+   - Menampilkan:
+     - **TIMEFRAME**: M1, M5, dll.
+     - **SIGNAL**: BUY NOW / SELL NOW / WAIT
+     - **CONFIDENCE**: XX%
+     - **ENTRY**: Harga Entry
+     - **STOP LOSS**: Harga SL
+     - **TAKE PROFIT**: Harga TP
+     - **RISK REWARD**: 1:2 atau 1:3
+     - **WAKTU PEMBARUAN**: Waktu analisis terakhir
+   - Tombol cepat: **COPY** (menyalin order ke clipboard), **MINIMIZE** (menciutkan ke pill ringkas), dan **CLOSE**.
+   - Dapat digeser bebas (draggable) dengan pembatas layar (tidak keluar dari batas tampilan) dan menyimpan posisi terakhir.
 
-5. **Manajemen Risiko & Kalkulator Lot**
-   - Menghitung risiko modal berdasarkan persentase (0.5% - 5%).
-   - Menghitung rasio Risk:Reward (1:1.5, 1:2, 1:3).
-   - Menghitung estimasi ukuran lot berdasarkan instrumen kontrak (Forex Standard 100k, Gold XAUUSD 100oz, Crypto, Indeks).
+5. **Kalkulator Risiko & Manajemen Lot**
+   - Menghitung risiko akun berdasarkan persentase modal (0.5% - 5%).
+   - Menghitung ukuran lot posisi sesuai instrumen (Forex Standard 100k, Gold XAUUSD, Crypto, Indeks).
 
-6. **Penyimpanan Lokal Room Database**
-   - Menyimpan seluruh riwayat sinyal secara offline di perangkat via Room SQLite.
-   - Fitur filter BUY, SELL, WAIT, dan pembersihan riwayat.
+6. **Penyimpanan Offline Room Database**
+   - Riwayat sinyal disimpan di SQLite lokal via Room.
+   - Fitur filter dan pembersihan riwayat.
 
-7. **Konfigurasi API Key yang Fleksibel & Aman**
-   - Pengguna dapat memasukkan Gemini API Key langsung melalui menu Pengaturan di aplikasi.
-   - Mendukung injeksi melalui `.env` lokal atau GitHub Secrets (`GEMINI_API_KEY`) via Secrets Gradle Plugin (`BuildConfig.GEMINI_API_KEY`).
-   - API Key tidak pernah dicetak di logcat atau ditampilkan secara terbuka di UI.
+7. **Bebas API Key & Tanpa Server Eksternal**
+   - Tidak memerlukan Gemini API Key, Firebase AI Logic, Node.js, VPS, atau cloud service apapun.
+   - Bebas error "API KEY BELUM DI SET".
 
 ---
 
@@ -56,15 +66,19 @@ uda-ai-trader/
 │   └── android-build.yml           # GitHub Actions CI/CD Build & Artifact Upload
 ├── app/
 │   ├── src/main/java/com/example/
-│   │   ├── UdaTraderApp.kt          # Application Context & Service Locator
-│   │   ├── MainActivity.kt          # UI Container & Navigation Coordinator
+│   │   ├── UdaTraderApp.kt          # Application Context
+│   │   ├── MainActivity.kt          # Navigation & Lifecycle Coordinator
 │   │   ├── model/
-│   │   │   └── TradingModels.kt     # Domain Signal & Risk Models
+│   │   │   └── TradingModels.kt     # Signal, Timeframe, Metrics & Risk Models
 │   │   ├── data/
 │   │   │   ├── db/                  # Local Room Database (SignalEntity, SignalDao, AppDatabase)
-│   │   │   ├── api/                 # AiTraderEngine (Direct Gemini Vision), GeminiPrompt, SignalValidator
-│   │   │   ├── pref/                # AppSettings (SharedPreferences & Secrets fallback)
-│   │   │   └── repository/          # TradingRepository (Data Coordinator & Alerts)
+│   │   │   ├── engine/              # Universal Signal Engine & Visual Chart Scanner
+│   │   │   │   ├── Candlestick.kt
+│   │   │   │   ├── TechnicalIndicators.kt (EMA, RSI, ATR, S&R)
+│   │   │   │   ├── VisualChartScanner.kt (CV Chart Recognition)
+│   │   │   │   └── UniversalSignalEngine.kt (Master Analysis Brain)
+│   │   │   ├── pref/                # AppSettings (Local SharedPreferences)
+│   │   │   └── repository/          # TradingRepository
 │   │   ├── service/
 │   │   │   ├── ScreenCaptureService.kt   # MediaProjection Foreground Service
 │   │   │   └── FloatingWindowService.kt  # SYSTEM_ALERT_WINDOW Overlay Service
@@ -72,68 +86,41 @@ uda-ai-trader/
 │   │   │   └── TraderViewModel.kt   # Jetpack StateFlow ViewModel
 │   │   └── ui/
 │   │       ├── screens/
-│   │       │   ├── CockpitScreen.kt        # Real-time Cockpit & Live Telemetry
-│   │       │   ├── HistoryScreen.kt        # Offline Database Signal Logs
+│   │       │   ├── CockpitScreen.kt        # Real-time Cockpit & Timeframe Selector
+│   │       │   ├── HistoryScreen.kt        # Room Database Signal Logs
 │   │       │   ├── RiskCalculatorScreen.kt # Position Sizing & Lot Calculator
-│   │       │   └── SettingsScreen.kt       # Direct Gemini API Configuration
+│   │       │   └── SettingsScreen.kt       # Universal Engine Technical Settings
 │   │       └── theme/                      # Cyber Dark Fintech Material 3 Theme
 │   └── AndroidManifest.xml          # Permissions & Service Declarations
 ├── gradle/wrapper/                  # Gradle 9.3.1 Wrapper & Jar
-├── .env.example                     # Secrets template
 └── README.md
 ```
-
----
-
-## 📋 Izin Android yang Digunakan
-
-1. `android.permission.INTERNET` & `ACCESS_NETWORK_STATE`: Komunikasi langsung ke Google Gemini API.
-2. `android.permission.SYSTEM_ALERT_WINDOW`: Menampilkan Floating Window di atas MetaTrader 5.
-3. `android.permission.FOREGROUND_SERVICE` & `FOREGROUND_SERVICE_MEDIA_PROJECTION`: Menjalankan perekaman layar berkelanjutan sesuai spesifikasi Android 14+.
-4. `android.permission.POST_NOTIFICATIONS`: Notifikasi foreground service pada Android 13+.
-5. `android.permission.VIBRATE`: Umpan balik haptik ketika sinyal terkonfirmasi terbentuk.
 
 ---
 
 ## 📱 Panduan Penggunaan dengan MetaTrader 5 (MT5)
 
 1. **Jalankan Aplikasi UDA AI TRADER**.
-2. Masuk ke tab **Pengaturan**:
-   - Masukkan Google Gemini API Key Anda.
-   - Pilih model (direkomendasikan: `gemini-1.5-flash`).
-   - Tekan **UJI KONEKSI GEMINI API SEKARANG** untuk memverifikasi kuota dan koneksi.
-3. Kembali ke tab **Cockpit**:
-   - Tekan **BUKA FLOATING WINDOW DI ATAS MT5** (izinkan "Tampilan di atas aplikasi lain" pada setelan perangkat jika pertama kali).
-   - Tekan **MULAI ANALISIS** dan izinkan perekaman layar pada dialog konfirmasi Android.
-4. **Buka aplikasi MetaTrader 5**:
+2. **Pilih Timeframe** pada baris selector di atas (M1, M5, M15, M30, H1, H4, D1, W1, MN1) sesuai chart MT5 yang ingin dianalisis.
+3. Tekan **BUKA FLOATING WINDOW DI ATAS MT5** (izinkan izin overlay Android jika baru pertama kali).
+4. Tekan **MULAI PEMANTAUAN** dan berikan izin perekaman layar.
+5. **Buka aplikasi MetaTrader 5**:
    - Floating Window akan tetap tampil di atas chart MT5.
-   - Posisikan chart candlestick MT5 dengan kontras yang jelas.
-   - Sinyal **BUY NOW**, **SELL NOW**, atau **WAIT** akan diperbarui secara otomatis.
-   - Gunakan tombol **COPY** untuk menyalin level entry, SL, dan TP ke clipboard.
+   - Universal Signal Engine membaca chart secara real-time setiap 1 detik.
+   - Sinyal **BUY NOW**, **SELL NOW**, atau **WAIT** beserta harga Entry, SL, TP, dan Confidence diperbarui secara otomatis.
+   - Tekan tombol **COPY** pada Floating Window untuk menyalin parameter order ke clipboard.
 
 ---
 
 ## ⚙️ Kompilasi & Build APK di GitHub Actions
 
-Proyek ini telah dikonfigurasi agar dapat dibuild secara otomatis di **GitHub Actions**:
-- Workflow: `.github/workflows/android-build.yml`
-- Menggunakan JDK 21 (Temurin), Gradle 9.3.1 Wrapper, dan Android SDK 36.
-- Menyiapkan keystore debug dan environment file secara otomatis di runner CI.
-- Menghasilkan artifact APK Debug yang dapat diunduh langsung: `app/build/outputs/apk/debug/app-debug.apk`.
+Workflow `.github/workflows/android-build.yml` otomatis membangun APK tanpa membutuhkan API key atau file rahasia:
+- Menggunakan JDK 21 (Temurin) dan Gradle 9.3.1.
+- Menghasilkan artifact APK Debug:
+  `app/build/outputs/apk/debug/app-debug.apk`
+- Dapat diunduh langsung dari tab **Actions** di GitHub.
 
-Untuk build manual di komputer lokal:
+Untuk build lokal:
 ```bash
 ./gradlew assembleDebug
 ```
-
----
-
-## 🔒 Peringatan Keamanan API Key
-
-API Key disimpan secara lokal pada perangkat Anda atau disuntikkan saat kompilasi via `BuildConfig.GEMINI_API_KEY`. Perlu diperhatikan bahwa binary Android APK dapat didekompilasi dan secret di dalamnya dapat diekstrak oleh pihak yang memiliki file APK. Jangan membagikan file APK atau source code yang mengandung API Key aktif kepada publik.
-
----
-
-## ⚠️ Disclaimer Risiko Trading
-
-Trading instrumen Forex, Komoditas, Indeks, dan Kripto memiliki tingkat risiko kerugian yang tinggi. Aplikasi UDA AI TRADER berfungsi sebagai asisten analisis teknikal berbantuan kecerdasan buatan, bukan penasihat keuangan atau sistem eksekusi transaksi otomatis. Selalu gunakan manajemen risiko yang ketat.

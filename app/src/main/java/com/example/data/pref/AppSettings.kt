@@ -2,7 +2,7 @@ package com.example.data.pref
 
 import android.content.Context
 import android.content.SharedPreferences
-import com.example.BuildConfig
+import com.example.model.Mt5Timeframe
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
@@ -11,56 +11,52 @@ class AppSettings(context: Context) {
     private val prefs: SharedPreferences = context.getSharedPreferences("uda_trader_prefs", Context.MODE_PRIVATE)
 
     companion object {
-        private const val KEY_GEMINI_KEY = "key_gemini_key"
-        private const val KEY_MODEL = "key_model"
+        private const val KEY_TIMEFRAME = "key_active_timeframe"
         private const val KEY_INTERVAL = "key_interval"
         private const val KEY_VIBRATION = "key_vibration"
         private const val KEY_SOUND = "key_sound"
+        private const val KEY_OVERLAY_X = "key_overlay_x"
+        private const val KEY_OVERLAY_Y = "key_overlay_y"
+        private const val KEY_RISK_REWARD = "key_risk_reward"
 
-        const val DEFAULT_MODEL = "gemini-1.5-flash"
+        val DEFAULT_TIMEFRAME = Mt5Timeframe.M5
     }
 
     private val _settingsFlow = MutableStateFlow(loadSettings())
     val settingsFlow: StateFlow<SettingsState> = _settingsFlow.asStateFlow()
 
     data class SettingsState(
-        val geminiApiKey: String,
-        val selectedModel: String,
+        val activeTimeframe: Mt5Timeframe,
         val intervalSeconds: Int,
         val vibrationEnabled: Boolean,
-        val soundEnabled: Boolean
+        val soundEnabled: Boolean,
+        val overlayX: Int,
+        val overlayY: Int,
+        val preferredRiskReward: String
     )
 
     private fun loadSettings(): SettingsState {
-        // BuildConfig fallback or empty from Secrets Gradle Plugin
-        val envKey = runCatching {
-            BuildConfig::class.java.getField("GEMINI_API_KEY").get(null) as? String
-        }.getOrNull()?.takeUnless { it == "your_api_key_here" } ?: ""
-
-        val savedKey = prefs.getString(KEY_GEMINI_KEY, "") ?: ""
-        val effectiveKey = if (savedKey.isNotBlank()) savedKey else envKey
+        val tfCode = prefs.getString(KEY_TIMEFRAME, DEFAULT_TIMEFRAME.code)
+        val timeframe = Mt5Timeframe.fromCode(tfCode)
 
         return SettingsState(
-            geminiApiKey = effectiveKey,
-            selectedModel = prefs.getString(KEY_MODEL, DEFAULT_MODEL) ?: DEFAULT_MODEL,
-            intervalSeconds = prefs.getInt(KEY_INTERVAL, 3).coerceIn(1, 10),
+            activeTimeframe = timeframe,
+            intervalSeconds = prefs.getInt(KEY_INTERVAL, 1).coerceIn(1, 5),
             vibrationEnabled = prefs.getBoolean(KEY_VIBRATION, true),
-            soundEnabled = prefs.getBoolean(KEY_SOUND, true)
+            soundEnabled = prefs.getBoolean(KEY_SOUND, true),
+            overlayX = prefs.getInt(KEY_OVERLAY_X, 40),
+            overlayY = prefs.getInt(KEY_OVERLAY_Y, 200),
+            preferredRiskReward = prefs.getString(KEY_RISK_REWARD, "1:2") ?: "1:2"
         )
     }
 
-    fun updateGeminiApiKey(key: String) {
-        prefs.edit().putString(KEY_GEMINI_KEY, key.trim()).apply()
-        _settingsFlow.value = loadSettings()
-    }
-
-    fun updateModel(model: String) {
-        prefs.edit().putString(KEY_MODEL, model).apply()
+    fun updateTimeframe(timeframe: Mt5Timeframe) {
+        prefs.edit().putString(KEY_TIMEFRAME, timeframe.code).apply()
         _settingsFlow.value = loadSettings()
     }
 
     fun updateInterval(seconds: Int) {
-        prefs.edit().putInt(KEY_INTERVAL, seconds.coerceIn(1, 10)).apply()
+        prefs.edit().putInt(KEY_INTERVAL, seconds.coerceIn(1, 5)).apply()
         _settingsFlow.value = loadSettings()
     }
 
@@ -74,16 +70,15 @@ class AppSettings(context: Context) {
         _settingsFlow.value = loadSettings()
     }
 
-    fun getSettings(): SettingsState = _settingsFlow.value
-
-    fun getMaskedApiKey(): String {
-        val key = _settingsFlow.value.geminiApiKey
-        return if (key.length > 8) {
-            "••••••••" + key.takeLast(4)
-        } else if (key.isNotBlank()) {
-            "••••••••"
-        } else {
-            "Belum dikonfigurasi"
-        }
+    fun saveOverlayPosition(x: Int, y: Int) {
+        prefs.edit().putInt(KEY_OVERLAY_X, x).putInt(KEY_OVERLAY_Y, y).apply()
+        _settingsFlow.value = loadSettings()
     }
+
+    fun updatePreferredRiskReward(rr: String) {
+        prefs.edit().putString(KEY_RISK_REWARD, rr).apply()
+        _settingsFlow.value = loadSettings()
+    }
+
+    fun getSettings(): SettingsState = _settingsFlow.value
 }
