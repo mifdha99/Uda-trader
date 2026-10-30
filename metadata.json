@@ -1,0 +1,6 @@
+{
+  "name": "UDA AI TRADER",
+  "description": "AI-powered real-time trading analysis for MetaTrader 5 with screen capture, Gemini Vision, floating overlay, and risk management.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}

@@ -1,0 +1,8 @@
+<resources>
+    <string name="app_name">UDA AI TRADER</string>
+    <string name="channel_name">UDA AI TRADER Live Monitoring</string>
+    <string name="channel_desc">Active screen capture and chart AI analysis notifications</string>
+    <string name="notification_title">UDA AI TRADER Aktif</string>
+    <string name="notification_text">Memantau chart MT5 dan menganalisis sinyal pasar secara real-time</string>
+    <string name="stop_service">Berhenti</string>
+</resources>
