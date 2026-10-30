@@ -16,12 +16,14 @@ import okhttp3.RequestBody.Companion.toRequestBody
 import org.json.JSONArray
 import org.json.JSONObject
 import java.io.ByteArrayOutputStream
-import java.text.SimpleDateFormat
-import java.util.Date
-import java.util.Locale
-import java.util.TimeZone
+import java.io.IOException
+import java.net.SocketTimeoutException
+import java.net.UnknownHostException
 import java.util.concurrent.TimeUnit
 
+/**
+ * Direct Gemini Vision trading analysis engine running completely client-side without any backend.
+ */
 class AiTraderEngine(
     private val appSettings: AppSettings
 ) {
@@ -32,34 +34,36 @@ class AiTraderEngine(
 
     private val httpClient = OkHttpClient.Builder()
         .connectTimeout(15, TimeUnit.SECONDS)
-        .readTimeout(25, TimeUnit.SECONDS)
-        .writeTimeout(25, TimeUnit.SECONDS)
+        .readTimeout(30, TimeUnit.SECONDS)
+        .writeTimeout(30, TimeUnit.SECONDS)
         .retryOnConnectionFailure(true)
         .build()
 
     private var previousSignal: TradingSignal? = null
 
     /**
-     * Analyzes captured bitmap using either the secure backend or direct Gemini API.
+     * Analyzes captured chart bitmap using Google Gemini Vision API directly.
      */
     suspend fun analyzeChart(bitmap: Bitmap): Result<TradingSignal> = withContext(Dispatchers.IO) {
         runCatching {
             val settings = appSettings.getSettings()
+            val apiKey = settings.geminiApiKey.trim()
+
+            if (apiKey.isBlank()) {
+                throw IllegalStateException("API Key Gemini belum diset. Silakan masukkan API Key di menu Pengaturan.")
+            }
 
             // 1. Optimize Bitmap to compact JPEG Base64
             val base64Image = bitmapToBase64(bitmap)
 
-            val rawJson: String = if (settings.useDirectGemini && settings.geminiApiKey.isNotBlank()) {
-                callDirectGeminiVision(base64Image, settings.geminiApiKey, settings.selectedModel)
-            } else {
-                callBackendServer(base64Image, settings.backendUrl, settings.geminiApiKey)
-            }
+            // 2. Call Direct Gemini Vision API
+            val rawJson = callDirectGeminiVision(base64Image, apiKey, settings.selectedModel)
 
-            // 2. Parse & Validate
+            // 3. Parse & Validate
             val validatedResult = SignalValidator.parseAndValidate(rawJson)
             val currentSignal = validatedResult.getOrThrow()
 
-            // 3. Compare with previous signal & apply State Machine logic
+            // 4. Compare with previous signal & apply State Machine logic
             val processedSignal = filterAndProcessSignal(currentSignal)
             previousSignal = processedSignal
 
@@ -69,7 +73,7 @@ class AiTraderEngine(
 
     /**
      * Converts bitmap to optimized JPEG Base64 string.
-     * Scales down if larger than 1280px to save bandwidth and compute while maintaining crisp candle details.
+     * Scales down if larger than 1280px to save bandwidth while keeping candle wicks and text sharp.
      */
     private fun bitmapToBase64(bitmap: Bitmap): String {
         val maxDim = 1280
@@ -91,71 +95,33 @@ class AiTraderEngine(
     }
 
     /**
-     * Calls the self-hosted secure backend server.
-     */
-    private fun callBackendServer(base64Image: String, backendUrl: String, optionalApiKey: String): String {
-        val requestJson = JSONObject().apply {
-            put("image", base64Image)
-            put("timestamp", getCurrentIsoTimestamp())
-            put("system_prompt", GeminiPrompt.SYSTEM_INSTRUCTION)
-            if (optionalApiKey.isNotBlank()) {
-                put("apiKey", optionalApiKey)
-            }
-            previousSignal?.let {
-                val prevObj = JSONObject().apply {
-                    put("signal", it.signal.name)
-                    put("pair", it.pair)
-                    put("timeframe", it.timeframe)
-                    put("confirmation", it.confirmation.name)
-                }
-                put("previous_signal", prevObj)
-            }
-        }
-
-        val body = requestJson.toString().toRequestBody(JSON_MEDIA_TYPE)
-        val request = Request.Builder()
-            .url(backendUrl)
-            .post(body)
-            .addHeader("Content-Type", "application/json")
-            .build()
-
-        val response = httpClient.newCall(request).execute()
-        val responseBody = response.body?.string().orEmpty()
-
-        if (!response.isSuccessful) {
-            Log.e(TAG, "Backend error: ${response.code} $responseBody")
-            throw IllegalStateException("Backend HTTP ${response.code}: $responseBody")
-        }
-
-        // Backend can return raw json signal or wrapped in { "data": {...} }
-        return try {
-            val obj = JSONObject(responseBody)
-            if (obj.has("signal")) {
-                responseBody
-            } else if (obj.has("data")) {
-                obj.getJSONObject("data").toString()
-            } else {
-                responseBody
-            }
-        } catch (_: Exception) {
-            responseBody
-        }
-    }
-
-    /**
-     * Direct call to Google Gemini Vision API using API key from settings or BuildConfig.
+     * Direct call to Google Gemini Vision API using the provided API key and model.
+     * Never exposes or logs the API key.
      */
     private fun callDirectGeminiVision(base64Image: String, apiKey: String, model: String): String {
-        val effectiveModel = if (model.isBlank()) "gemini-2.5-flash" else model
+        val effectiveModel = if (model.isBlank()) "gemini-1.5-flash" else model
         val url = "https://generativelanguage.googleapis.com/v1beta/models/$effectiveModel:generateContent?key=$apiKey"
 
         val rootJson = JSONObject().apply {
+            // System instruction
+            put("systemInstruction", JSONObject().apply {
+                put("parts", JSONArray().apply {
+                    put(JSONObject().apply {
+                        put("text", GeminiPrompt.SYSTEM_INSTRUCTION)
+                    })
+                })
+            })
+
+            // Contents with prompt and inline image
             val contentsArray = JSONArray().apply {
                 val contentObj = JSONObject().apply {
                     val partsArray = JSONArray().apply {
                         // Instruction part
                         val textPart = JSONObject().apply {
-                            put("text", "${GeminiPrompt.SYSTEM_INSTRUCTION}\n\nAnalyze this MetaTrader 5 chart image now. Output strictly valid JSON.")
+                            val prevContext = previousSignal?.let {
+                                "Sinyal sebelumnya: ${it.signal} pada ${it.pair} ${it.timeframe} (${it.confirmation})."
+                            } ?: "Analisis awal / frame pertama."
+                            put("text", "Analisis chart MetaTrader 5 berikut secara seksama. $prevContext Berikan output HANYA berupa JSON terstruktur.")
                         }
                         put(textPart)
 
@@ -164,10 +130,9 @@ class AiTraderEngine(
                             put("mimeType", "image/jpeg")
                             put("data", base64Image)
                         }
-                        val imagePart = JSONObject().apply {
+                        put(JSONObject().apply {
                             put("inlineData", inlineData)
-                        }
-                        put(imagePart)
+                        })
                     }
                     put("parts", partsArray)
                 }
@@ -175,7 +140,7 @@ class AiTraderEngine(
             }
             put("contents", contentsArray)
 
-            // Generation config requesting JSON
+            // Generation config requesting structured JSON
             val genConfig = JSONObject().apply {
                 put("responseMimeType", "application/json")
                 put("temperature", 0.1)
@@ -190,12 +155,22 @@ class AiTraderEngine(
             .addHeader("Content-Type", "application/json")
             .build()
 
-        val response = httpClient.newCall(request).execute()
+        val response = try {
+            httpClient.newCall(request).execute()
+        } catch (e: SocketTimeoutException) {
+            throw IOException("Koneksi timeout. Gemini API tidak merespons dalam 30 detik.", e)
+        } catch (e: UnknownHostException) {
+            throw IOException("Gagal terhubung ke internet. Periksa koneksi data seluler / Wi-Fi.", e)
+        } catch (e: IOException) {
+            throw IOException("Gangguan jaringan: ${e.localizedMessage ?: "Tidak dapat menghubungi server"}", e)
+        }
+
         val responseBody = response.body?.string().orEmpty()
 
         if (!response.isSuccessful) {
-            Log.e(TAG, "Gemini direct API error: ${response.code} $responseBody")
-            throw IllegalStateException("Gemini API HTTP ${response.code}: $responseBody")
+            val friendlyError = parseGeminiError(response.code, responseBody)
+            Log.e(TAG, "Gemini direct API error code: ${response.code}")
+            throw IllegalStateException(friendlyError)
         }
 
         val jsonResponse = JSONObject(responseBody)
@@ -209,11 +184,30 @@ class AiTraderEngine(
             }
         }
 
-        throw IllegalStateException("Empty or unparsable response from Gemini API")
+        throw IllegalStateException("Respons kosong dari Gemini API.")
     }
 
     /**
-     * Differentiates pending vs confirmed, checks direction reversal, and suppresses spam duplicates.
+     * Translates Gemini API error codes into descriptive Indonesian error messages.
+     */
+    private fun parseGeminiError(statusCode: Int, responseBody: String): String {
+        val serverMessage = runCatching {
+            val obj = JSONObject(responseBody)
+            obj.optJSONObject("error")?.optString("message", "") ?: ""
+        }.getOrDefault("")
+
+        return when (statusCode) {
+            400 -> if (serverMessage.isNotBlank()) "Permintaan tidak valid: $serverMessage" else "Format request tidak valid (HTTP 400)."
+            401, 403 -> "Gemini API Key tidak valid atau tidak memiliki izin akses (HTTP $statusCode). Periksa API Key di Pengaturan."
+            404 -> "Model Gemini tidak ditemukan (HTTP 404). Silakan pilih model lain di Pengaturan."
+            429 -> "Batas kuota penggunaan Gemini API tercapai (Rate Limit 429). Mohon tunggu beberapa saat sebelum mencoba lagi."
+            500, 502, 503 -> "Server Google Gemini sedang mengalami gangguan sementara (HTTP $statusCode)."
+            else -> "Terjadi kesalahan API (HTTP $statusCode): ${serverMessage.ifBlank { "Respons tidak berhasil" }}"
+        }
+    }
+
+    /**
+     * Differentiates pending vs confirmed, checks direction reversal, and maintains stability.
      */
     private fun filterAndProcessSignal(newSignal: TradingSignal): TradingSignal {
         val prev = previousSignal ?: return newSignal
@@ -239,43 +233,36 @@ class AiTraderEngine(
         return newSignal
     }
 
-    private fun getCurrentIsoTimestamp(): String {
-        val sdf = SimpleDateFormat("yyyy-MM-dd'T'HH:mm:ss'Z'", Locale.US)
-        sdf.timeZone = TimeZone.getTimeZone("UTC")
-        return sdf.format(Date())
-    }
-
     /**
-     * Test connection to configured backend or Gemini.
+     * Test connection directly to Google Gemini API.
      */
     suspend fun testConnection(): Result<String> = withContext(Dispatchers.IO) {
         runCatching {
             val settings = appSettings.getSettings()
-            if (settings.useDirectGemini) {
-                if (settings.geminiApiKey.isBlank()) {
-                    throw IllegalStateException("API Key Gemini belum diisi.")
-                }
-                val url = "https://generativelanguage.googleapis.com/v1beta/models?key=${settings.geminiApiKey}"
-                val request = Request.Builder().url(url).get().build()
-                val response = httpClient.newCall(request).execute()
-                if (response.isSuccessful) {
-                    "Koneksi Google Gemini API Berhasil (${response.code} OK)"
-                } else {
-                    throw IllegalStateException("Gemini API Error: ${response.code} ${response.message}")
-                }
+            val apiKey = settings.geminiApiKey.trim()
+
+            if (apiKey.isBlank()) {
+                throw IllegalStateException("API Key Gemini belum diisi. Masukkan API Key terlebih dahulu.")
+            }
+
+            val testModel = if (settings.selectedModel.isBlank()) "gemini-1.5-flash" else settings.selectedModel
+            val url = "https://generativelanguage.googleapis.com/v1beta/models/$testModel?key=$apiKey"
+            val request = Request.Builder().url(url).get().build()
+
+            val response = try {
+                httpClient.newCall(request).execute()
+            } catch (e: UnknownHostException) {
+                throw IOException("Tidak dapat terhubung ke internet. Periksa koneksi Anda.", e)
+            } catch (e: SocketTimeoutException) {
+                throw IOException("Koneksi timeout saat menghubungi Google Gemini API.", e)
+            }
+
+            val responseBody = response.body?.string().orEmpty()
+
+            if (response.isSuccessful) {
+                "Koneksi Google Gemini API Berhasil ($testModel siap digunakan)"
             } else {
-                val pingUrl = if (settings.backendUrl.endsWith("/api/analyze")) {
-                    settings.backendUrl.removeSuffix("/api/analyze") + "/health"
-                } else {
-                    settings.backendUrl
-                }
-                val request = Request.Builder().url(pingUrl).get().build()
-                val response = httpClient.newCall(request).execute()
-                if (response.isSuccessful || response.code == 404 || response.code == 405) {
-                    "Koneksi Backend Berhasil dijangkau (${response.code})"
-                } else {
-                    throw IllegalStateException("Backend Error: ${response.code} ${response.message}")
-                }
+                throw IllegalStateException(parseGeminiError(response.code, responseBody))
             }
         }
     }

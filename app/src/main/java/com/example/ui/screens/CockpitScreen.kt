@@ -83,7 +83,7 @@ fun CockpitScreen(
     statusMessage: String,
     isFloatingOverlayVisible: Boolean,
     selectedInterval: Int,
-    useDirectGemini: Boolean,
+    selectedModel: String,
     onStartCapture: () -> Unit,
     onStopCapture: () -> Unit,
     onToggleFloatingOverlay: () -> Unit,
@@ -132,8 +132,8 @@ fun CockpitScreen(
                     .padding(horizontal = 10.dp, vertical = 6.dp)
             ) {
                 Text(
-                    text = if (useDirectGemini) "DIRECT GEMINI" else "SECURE BACKEND",
-                    color = if (useDirectGemini) CyanAccent else NeonGreen,
+                    text = selectedModel.uppercase(),
+                    color = CyanAccent,
                     fontSize = 10.sp,
                     fontWeight = FontWeight.Bold,
                     fontFamily = FontFamily.Monospace

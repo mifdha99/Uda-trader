@@ -129,11 +129,9 @@ class TraderViewModel(application: Application) : AndroidViewModel(application) 
         _connectionTestStatus.value = null
     }
 
-    fun updateBackendUrl(url: String) = appSettings.updateBackendUrl(url)
     fun updateGeminiApiKey(key: String) = appSettings.updateGeminiApiKey(key)
     fun updateModel(model: String) = appSettings.updateModel(model)
     fun updateInterval(seconds: Int) = appSettings.updateInterval(seconds)
-    fun updateUseDirect(direct: Boolean) = appSettings.updateUseDirect(direct)
     fun updateVibration(enabled: Boolean) = appSettings.updateVibration(enabled)
     fun updateSound(enabled: Boolean) = appSettings.updateSound(enabled)
 

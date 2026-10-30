@@ -1,38 +1,93 @@
-@echo off
-setlocal
-set "ROOT_DIR=%~dp0"
-set "PROPERTIES_FILE=%ROOT_DIR%gradle\wrapper\gradle-wrapper.properties"
-if not exist "%PROPERTIES_FILE%" (
-  echo ERROR: gradle-wrapper.properties tidak ditemukan.
-  exit /b 1
-)
-for /f "usebackq tokens=1,* delims==" %%A in ("%PROPERTIES_FILE%") do (
-  if "%%A"=="distributionUrl" set "DIST_URL=%%B"
-)
-if not defined DIST_URL (
-  echo ERROR: distributionUrl tidak ditemukan.
-  exit /b 1
-)
-set "DIST_URL=%DIST_URL:\:=%"
-for %%I in ("%DIST_URL%") do set "ZIP_NAME=%%~nxI"
-set "ARCHIVE_NAME=%ZIP_NAME:.zip=%"
-set "DIST_NAME=%ARCHIVE_NAME:-bin=%"
-set "DIST_NAME=%DIST_NAME:-all=%"
-set "DIST_NAME=%DIST_NAME:-src=%"
-set "CACHE_DIR=%USERPROFILE%\.gradle\manual-distributions"
-set "INSTALL_DIR=%CACHE_DIR%\%DIST_NAME%"
-set "GRADLE_BIN=%INSTALL_DIR%\bin\gradle.bat"
-if not exist "%GRADLE_BIN%" (
-  if not exist "%CACHE_DIR%" mkdir "%CACHE_DIR%"
-  echo Mengunduh distribusi Gradle: %DIST_URL%
-  powershell -NoProfile -ExecutionPolicy Bypass -Command "Invoke-WebRequest -Uri '%DIST_URL%' -OutFile '%CACHE_DIR%\%ZIP_NAME%'"
-  if errorlevel 1 exit /b 1
-  powershell -NoProfile -ExecutionPolicy Bypass -Command "Expand-Archive -LiteralPath '%CACHE_DIR%\%ZIP_NAME%' -DestinationPath '%CACHE_DIR%' -Force"
-  if errorlevel 1 exit /b 1
-)
-if not exist "%GRADLE_BIN%" (
-  echo ERROR: Gradle tidak ditemukan: %GRADLE_BIN%
-  exit /b 1
-)
-call "%GRADLE_BIN%" %*
-exit /b %ERRORLEVEL%
+@rem
+@rem Copyright 2015 the original author or authors.
+@rem
+@rem Licensed under the Apache License, Version 2.0 (the "License");
+@rem you may not use this file except in compliance with the License.
+@rem You may obtain a copy of the License at
+@rem
+@rem      https://www.apache.org/licenses/LICENSE-2.0
+@rem
+@rem Unless required by applicable law or agreed to in writing, software
+@rem distributed under the License is distributed on an "AS IS" BASIS,
+@rem WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+@rem See the License for the specific language governing permissions and
+@rem limitations under the License.
+@rem
+@rem SPDX-License-Identifier: Apache-2.0
+@rem
+
+@if "%DEBUG%"=="" @echo off
+@rem ##########################################################################
+@rem
+@rem  Gradle startup script for Windows
+@rem
+@rem ##########################################################################
+
+@rem Set local scope for the variables with windows NT shell
+if "%OS%"=="Windows_NT" setlocal
+
+set DIRNAME=%~dp0
+if "%DIRNAME%"=="" set DIRNAME=.
+@rem This is normally unused
+set APP_BASE_NAME=%~n0
+set APP_HOME=%DIRNAME%
+
+@rem Resolve any "." and ".." in APP_HOME to make it shorter.
+for %%i in ("%APP_HOME%") do set APP_HOME=%%~fi
+
+@rem Add default JVM options here. You can also use JAVA_OPTS and GRADLE_OPTS to pass JVM options to this script.
+set DEFAULT_JVM_OPTS="-Xmx64m" "-Xms64m"
+
+@rem Find java.exe
+if defined JAVA_HOME goto findJavaFromJavaHome
+
+set JAVA_EXE=java.exe
+%JAVA_EXE% -version >NUL 2>&1
+if %ERRORLEVEL% equ 0 goto execute
+
+echo. 1>&2
+echo ERROR: JAVA_HOME is not set and no 'java' command could be found in your PATH. 1>&2
+echo. 1>&2
+echo Please set the JAVA_HOME variable in your environment to match the 1>&2
+echo location of your Java installation. 1>&2
+
+goto fail
+
+:findJavaFromJavaHome
+set JAVA_HOME=%JAVA_HOME:"=%
+set JAVA_EXE=%JAVA_HOME%/bin/java.exe
+
+if exist "%JAVA_EXE%" goto execute
+
+echo. 1>&2
+echo ERROR: JAVA_HOME is set to an invalid directory: %JAVA_HOME% 1>&2
+echo. 1>&2
+echo Please set the JAVA_HOME variable in your environment to match the 1>&2
+echo location of your Java installation. 1>&2
+
+goto fail
+
+:execute
+@rem Setup the command line
+
+
+
+@rem Execute Gradle
+"%JAVA_EXE%" %DEFAULT_JVM_OPTS% %JAVA_OPTS% %GRADLE_OPTS% "-Dorg.gradle.appname=%APP_BASE_NAME%" -jar "%APP_HOME%\gradle\wrapper\gradle-wrapper.jar" %*
+
+:end
+@rem End local scope for the variables with windows NT shell
+if %ERRORLEVEL% equ 0 goto mainEnd
+
+:fail
+rem Set variable GRADLE_EXIT_CONSOLE if you need the _script_ return code instead of
+rem the _cmd.exe /c_ return code!
+set EXIT_CODE=%ERRORLEVEL%
+if %EXIT_CODE% equ 0 set EXIT_CODE=1
+if not ""=="%GRADLE_EXIT_CONSOLE%" exit %EXIT_CODE%
+exit /b %EXIT_CODE%
+
+:mainEnd
+if "%OS%"=="Windows_NT" endlocal
+
+:omega

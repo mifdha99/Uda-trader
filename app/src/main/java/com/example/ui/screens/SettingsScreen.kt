@@ -18,14 +18,16 @@ import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.automirrored.filled.HelpOutline
+import androidx.compose.material.icons.automirrored.filled.VolumeUp
+import androidx.compose.material.icons.filled.AutoAwesome
 import androidx.compose.material.icons.filled.Check
-import androidx.compose.material.icons.filled.CloudQueue
-import androidx.compose.material.icons.filled.HelpOutline
 import androidx.compose.material.icons.filled.Key
 import androidx.compose.material.icons.filled.NetworkCheck
 import androidx.compose.material.icons.filled.Security
 import androidx.compose.material.icons.filled.Visibility
 import androidx.compose.material.icons.filled.VisibilityOff
+import androidx.compose.material.icons.filled.Vibration
 import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.Card
@@ -68,10 +70,8 @@ import com.example.ui.theme.Slate950
 fun SettingsScreen(
     settings: AppSettings.SettingsState,
     connectionTestStatus: String?,
-    onUpdateBackendUrl: (String) -> Unit,
     onUpdateGeminiKey: (String) -> Unit,
     onUpdateModel: (String) -> Unit,
-    onUpdateUseDirect: (Boolean) -> Unit,
     onUpdateVibration: (Boolean) -> Unit,
     onUpdateSound: (Boolean) -> Unit,
     onTestConnection: () -> Unit,
@@ -80,11 +80,10 @@ fun SettingsScreen(
 ) {
     val scrollState = rememberScrollState()
 
-    var backendUrlInput by remember(settings.backendUrl) { mutableStateOf(settings.backendUrl) }
     var geminiKeyInput by remember(settings.geminiApiKey) { mutableStateOf(settings.geminiApiKey) }
     var isKeyVisible by remember { mutableStateOf(false) }
 
-    val models = listOf("gemini-2.5-flash", "gemini-2.0-flash", "gemini-1.5-flash")
+    val models = listOf("gemini-1.5-flash", "gemini-2.0-flash", "gemini-1.5-pro")
 
     Column(
         modifier = modifier
@@ -97,20 +96,20 @@ fun SettingsScreen(
         // Header
         Column {
             Text(
-                text = "PENGATURAN & KONEKSI AI",
+                text = "PENGATURAN GOOGLE GEMINI AI",
                 color = Color.White,
                 fontSize = 20.sp,
                 fontWeight = FontWeight.Black,
                 letterSpacing = 1.sp
             )
             Text(
-                text = "Konfigurasi backend proxy atau Gemini Vision API engine",
-                color = Slate400,
+                text = "Integrasi langsung perangkat ke Google Gemini Vision (tanpa backend)",
+                color = CyanAccent,
                 fontSize = 12.sp
             )
         }
 
-        // Connection Mode Selection Card
+        // Gemini API Key Card
         Card(
             modifier = Modifier.fillMaxWidth(),
             colors = CardDefaults.cardColors(containerColor = DarkSurface),
@@ -121,119 +120,42 @@ fun SettingsScreen(
                 modifier = Modifier.padding(14.dp),
                 verticalArrangement = Arrangement.spacedBy(12.dp)
             ) {
-                Text(
-                    text = "ARSITEKTUR KONEKSI",
-                    color = Slate400,
-                    fontSize = 11.sp,
-                    fontWeight = FontWeight.Bold,
-                    letterSpacing = 0.8.sp
-                )
-
-                Row(
-                    modifier = Modifier.fillMaxWidth(),
-                    horizontalArrangement = Arrangement.spacedBy(8.dp)
-                ) {
-                    Box(
-                        modifier = Modifier
-                            .weight(1f)
-                            .clip(RoundedCornerShape(10.dp))
-                            .background(if (!settings.useDirectGemini) CyanAccent else Slate900)
-                            .border(1.dp, if (!settings.useDirectGemini) CyanAccent else DarkBorder, RoundedCornerShape(10.dp))
-                            .clickable { onUpdateUseDirect(false) }
-                            .padding(12.dp),
-                        contentAlignment = Alignment.Center
-                    ) {
-                        Column(horizontalAlignment = Alignment.CenterHorizontally) {
-                            Text(
-                                text = "UDA Backend",
-                                color = if (!settings.useDirectGemini) Color.Black else Color.White,
-                                fontWeight = FontWeight.Bold,
-                                fontSize = 13.sp
-                            )
-                            Text(
-                                text = "(Paling Aman)",
-                                color = if (!settings.useDirectGemini) Color.Black else NeonGreen,
-                                fontSize = 10.sp
-                            )
-                        }
-                    }
-
-                    Box(
-                        modifier = Modifier
-                            .weight(1f)
-                            .clip(RoundedCornerShape(10.dp))
-                            .background(if (settings.useDirectGemini) CyanAccent else Slate900)
-                            .border(1.dp, if (settings.useDirectGemini) CyanAccent else DarkBorder, RoundedCornerShape(10.dp))
-                            .clickable { onUpdateUseDirect(true) }
-                            .padding(12.dp),
-                        contentAlignment = Alignment.Center
-                    ) {
-                        Column(horizontalAlignment = Alignment.CenterHorizontally) {
-                            Text(
-                                text = "Direct Gemini API",
-                                color = if (settings.useDirectGemini) Color.Black else Color.White,
-                                fontWeight = FontWeight.Bold,
-                                fontSize = 13.sp
-                            )
-                            Text(
-                                text = "(Kunci Pribadi)",
-                                color = if (settings.useDirectGemini) Color.Black else Slate400,
-                                fontSize = 10.sp
-                            )
-                        }
-                    }
-                }
-            }
-        }
-
-        // Endpoint Configuration Card
-        Card(
-            modifier = Modifier.fillMaxWidth(),
-            colors = CardDefaults.cardColors(containerColor = DarkSurface),
-            shape = RoundedCornerShape(14.dp),
-            border = androidx.compose.foundation.BorderStroke(1.dp, DarkBorder)
-        ) {
-            Column(
-                modifier = Modifier.padding(14.dp),
-                verticalArrangement = Arrangement.spacedBy(12.dp)
-            ) {
-                if (!settings.useDirectGemini) {
-                    OutlinedTextField(
-                        value = backendUrlInput,
-                        onValueChange = {
-                            backendUrlInput = it
-                            onUpdateBackendUrl(it)
-                        },
-                        label = { Text("URL Server Backend UDA") },
-                        singleLine = true,
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .testTag("backend_url_input"),
-                        colors = OutlinedTextFieldDefaults.colors(
-                            focusedBorderColor = CyanAccent,
-                            unfocusedBorderColor = DarkBorder,
-                            focusedLabelColor = CyanAccent,
-                            unfocusedLabelColor = Slate400,
-                            focusedTextColor = Color.White,
-                            unfocusedTextColor = Color.White
-                        )
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    Icon(
+                        imageVector = Icons.Default.Key,
+                        contentDescription = "API Key",
+                        tint = CyanAccent,
+                        modifier = Modifier.size(18.dp)
+                    )
+                    Spacer(modifier = Modifier.width(8.dp))
+                    Text(
+                        text = "GEMINI API CREDENTIAL",
+                        color = Color.White,
+                        fontSize = 13.sp,
+                        fontWeight = FontWeight.Bold,
+                        letterSpacing = 0.5.sp
                     )
                 }
 
+                Text(
+                    text = "Aplikasi mengirim screenshot chart MT5 langsung ke endpoint resmi Google Generative AI tanpa server perantara.",
+                    color = Slate400,
+                    fontSize = 11.sp,
+                    lineHeight = 16.sp
+                )
+
                 OutlinedTextField(
                     value = geminiKeyInput,
-                    onValueChange = {
-                        geminiKeyInput = it
-                        onUpdateGeminiKey(it)
-                    },
-                    label = { Text(if (settings.useDirectGemini) "Google Gemini API Key (Wajib)" else "Gemini API Key (Opsional jika via Backend)") },
+                    onValueChange = { geminiKeyInput = it },
+                    label = { Text("Google Gemini API Key") },
+                    placeholder = { Text("AIzaSy...") },
                     singleLine = true,
                     visualTransformation = if (isKeyVisible) VisualTransformation.None else PasswordVisualTransformation(),
                     trailingIcon = {
                         IconButton(onClick = { isKeyVisible = !isKeyVisible }) {
                             Icon(
                                 imageVector = if (isKeyVisible) Icons.Default.VisibilityOff else Icons.Default.Visibility,
-                                contentDescription = "Toggle Key",
+                                contentDescription = if (isKeyVisible) "Sembunyikan Key" else "Tampilkan Key",
                                 tint = Slate400
                             )
                         }
@@ -244,80 +166,46 @@ fun SettingsScreen(
                     colors = OutlinedTextFieldDefaults.colors(
                         focusedBorderColor = CyanAccent,
                         unfocusedBorderColor = DarkBorder,
-                        focusedLabelColor = CyanAccent,
-                        unfocusedLabelColor = Slate400,
                         focusedTextColor = Color.White,
-                        unfocusedTextColor = Color.White
-                    )
+                        unfocusedTextColor = Color.White,
+                        focusedLabelColor = CyanAccent,
+                        unfocusedLabelColor = Slate400
+                    ),
+                    shape = RoundedCornerShape(10.dp)
                 )
 
-                // Model Selection
-                Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
-                    Text(text = "Pilih Model AI Vision:", color = Color.White, fontSize = 12.sp)
-
-                    Row(
-                        modifier = Modifier.fillMaxWidth(),
-                        horizontalArrangement = Arrangement.spacedBy(8.dp)
-                    ) {
-                        models.forEach { model ->
-                            val isSelected = settings.selectedModel == model
-                            Box(
-                                modifier = Modifier
-                                    .weight(1f)
-                                    .clip(RoundedCornerShape(8.dp))
-                                    .background(if (isSelected) CyanAccent else Slate900)
-                                    .border(1.dp, if (isSelected) CyanAccent else DarkBorder, RoundedCornerShape(8.dp))
-                                    .clickable { onUpdateModel(model) }
-                                    .padding(vertical = 8.dp),
-                                contentAlignment = Alignment.Center
-                            ) {
-                                Text(
-                                    text = model.removePrefix("gemini-"),
-                                    color = if (isSelected) Color.Black else Color.White,
-                                    fontWeight = FontWeight.Bold,
-                                    fontSize = 11.sp
-                                )
-                            }
-                        }
-                    }
-                }
-
-                // Test Connection Button & Result
-                Button(
-                    onClick = onTestConnection,
-                    colors = ButtonDefaults.buttonColors(containerColor = Slate800, contentColor = CyanAccent),
-                    shape = RoundedCornerShape(8.dp),
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .testTag("test_connection_button")
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.SpaceBetween,
+                    verticalAlignment = Alignment.CenterVertically
                 ) {
-                    Icon(Icons.Default.NetworkCheck, contentDescription = null, modifier = Modifier.size(18.dp))
-                    Spacer(modifier = Modifier.width(6.dp))
-                    Text("UJI KONEKSI ENDPOINT", fontWeight = FontWeight.Bold, fontSize = 12.sp)
-                }
+                    Text(
+                        text = if (settings.geminiApiKey.isNotBlank()) "Status: Terpasang (${settings.geminiApiKey.length} char)" else "Status: Belum diset",
+                        color = if (settings.geminiApiKey.isNotBlank()) NeonGreen else Slate400,
+                        fontSize = 11.sp,
+                        fontWeight = FontWeight.Medium
+                    )
 
-                if (connectionTestStatus != null) {
-                    val isSuccess = connectionTestStatus.startsWith("SUKSES")
-                    Box(
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .clip(RoundedCornerShape(8.dp))
-                            .background(if (isSuccess) Color(0x2210B981) else Color(0x22F43F5E))
-                            .border(1.dp, if (isSuccess) NeonGreen else NeonRed, RoundedCornerShape(8.dp))
-                            .padding(10.dp)
+                    Button(
+                        onClick = { onUpdateGeminiKey(geminiKeyInput.trim()) },
+                        colors = ButtonDefaults.buttonColors(containerColor = CyanAccent),
+                        shape = RoundedCornerShape(8.dp),
+                        modifier = Modifier.testTag("save_key_button")
                     ) {
-                        Text(
-                            text = connectionTestStatus,
-                            color = if (isSuccess) NeonGreen else NeonRed,
-                            fontSize = 12.sp,
-                            fontWeight = FontWeight.Medium
+                        Icon(
+                            imageVector = Icons.Default.Check,
+                            contentDescription = "Simpan",
+                            tint = Color.Black,
+                            modifier = Modifier.size(16.dp)
                         )
+                        Spacer(modifier = Modifier.width(6.dp))
+                        Text("Simpan Key", color = Color.Black, fontWeight = FontWeight.Bold, fontSize = 12.sp)
                     }
                 }
             }
         }
 
-        // Notification & Vibration Settings Card
+        // Model Selection Card
         Card(
             modifier = Modifier.fillMaxWidth(),
             colors = CardDefaults.cardColors(containerColor = DarkSurface),
@@ -328,43 +216,82 @@ fun SettingsScreen(
                 modifier = Modifier.padding(14.dp),
                 verticalArrangement = Arrangement.spacedBy(10.dp)
             ) {
-                Text(
-                    text = "PEMBERITAHUAN SINYAL TERKONFIRMASI",
-                    color = Slate400,
-                    fontSize = 11.sp,
-                    fontWeight = FontWeight.Bold,
-                    letterSpacing = 0.8.sp
-                )
-
-                Row(
-                    modifier = Modifier.fillMaxWidth(),
-                    verticalAlignment = Alignment.CenterVertically,
-                    horizontalArrangement = Arrangement.SpaceBetween
-                ) {
-                    Text(text = "Getaran Haptik saat BUY / SELL Terkonfirmasi", color = Color.White, fontSize = 13.sp)
-                    Switch(
-                        checked = settings.vibrationEnabled,
-                        onCheckedChange = onUpdateVibration,
-                        colors = SwitchDefaults.colors(checkedThumbColor = CyanAccent, checkedTrackColor = Slate800)
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    Icon(
+                        imageVector = Icons.Default.AutoAwesome,
+                        contentDescription = "Model",
+                        tint = CyanAccent,
+                        modifier = Modifier.size(18.dp)
+                    )
+                    Spacer(modifier = Modifier.width(8.dp))
+                    Text(
+                        text = "PILIHAN MODEL GEMINI VISION",
+                        color = Color.White,
+                        fontSize = 13.sp,
+                        fontWeight = FontWeight.Bold,
+                        letterSpacing = 0.5.sp
                     )
                 }
 
-                Row(
-                    modifier = Modifier.fillMaxWidth(),
-                    verticalAlignment = Alignment.CenterVertically,
-                    horizontalArrangement = Arrangement.SpaceBetween
-                ) {
-                    Text(text = "Suara Peringatan saat BUY / SELL Terkonfirmasi", color = Color.White, fontSize = 13.sp)
-                    Switch(
-                        checked = settings.soundEnabled,
-                        onCheckedChange = onUpdateSound,
-                        colors = SwitchDefaults.colors(checkedThumbColor = CyanAccent, checkedTrackColor = Slate800)
-                    )
+                Text(
+                    text = "Pilih model multimodal yang mendukung pemrosesan gambar berkecepatan tinggi:",
+                    color = Slate400,
+                    fontSize = 11.sp
+                )
+
+                Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                    models.forEach { modelName ->
+                        val isSelected = settings.selectedModel.equals(modelName, ignoreCase = true)
+                        Box(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .clip(RoundedCornerShape(10.dp))
+                                .background(if (isSelected) Slate800 else Slate900)
+                                .border(1.dp, if (isSelected) CyanAccent else DarkBorder, RoundedCornerShape(10.dp))
+                                .clickable { onUpdateModel(modelName) }
+                                .padding(horizontal = 14.dp, vertical = 10.dp)
+                        ) {
+                            Row(
+                                modifier = Modifier.fillMaxWidth(),
+                                horizontalArrangement = Arrangement.SpaceBetween,
+                                verticalAlignment = Alignment.CenterVertically
+                            ) {
+                                Column {
+                                    Text(
+                                        text = modelName,
+                                        color = if (isSelected) CyanAccent else Color.White,
+                                        fontWeight = FontWeight.Bold,
+                                        fontSize = 13.sp,
+                                        fontFamily = FontFamily.Monospace
+                                    )
+                                    Text(
+                                        text = when (modelName) {
+                                            "gemini-1.5-flash" -> "Rekomendasi Utama: Sangat cepat, efisien kuota & akurat"
+                                            "gemini-2.0-flash" -> "Generasi terbaru: Latensi ultra rendah"
+                                            "gemini-1.5-pro" -> "Analisis institusional mendalam: Penalaran kompleks"
+                                            else -> "Model multimodal vision"
+                                        },
+                                        color = Slate400,
+                                        fontSize = 10.sp
+                                    )
+                                }
+
+                                if (isSelected) {
+                                    Icon(
+                                        imageVector = Icons.Default.Check,
+                                        contentDescription = "Terpilih",
+                                        tint = CyanAccent,
+                                        modifier = Modifier.size(18.dp)
+                                    )
+                                }
+                            }
+                        }
+                    }
                 }
             }
         }
 
-        // MT5 Best Practices & Instructions
+        // Test Connection Card
         Card(
             modifier = Modifier.fillMaxWidth(),
             colors = CardDefaults.cardColors(containerColor = DarkSurface),
@@ -373,28 +300,179 @@ fun SettingsScreen(
         ) {
             Column(
                 modifier = Modifier.padding(14.dp),
-                verticalArrangement = Arrangement.spacedBy(8.dp)
+                verticalArrangement = Arrangement.spacedBy(12.dp)
             ) {
                 Row(verticalAlignment = Alignment.CenterVertically) {
-                    Icon(Icons.Default.HelpOutline, contentDescription = null, tint = CyanAccent, modifier = Modifier.size(18.dp))
-                    Spacer(modifier = Modifier.width(6.dp))
+                    Icon(
+                        imageVector = Icons.Default.NetworkCheck,
+                        contentDescription = "Test Connection",
+                        tint = CyanAccent,
+                        modifier = Modifier.size(18.dp)
+                    )
+                    Spacer(modifier = Modifier.width(8.dp))
                     Text(
-                        text = "PANDUAN OPTIMALISASI METATRADER 5",
+                        text = "UJI KONEKSI API LANGSUNG",
+                        color = Color.White,
+                        fontSize = 13.sp,
+                        fontWeight = FontWeight.Bold,
+                        letterSpacing = 0.5.sp
+                    )
+                }
+
+                Button(
+                    onClick = onTestConnection,
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .testTag("test_connection_button"),
+                    colors = ButtonDefaults.buttonColors(containerColor = Slate800),
+                    shape = RoundedCornerShape(10.dp)
+                ) {
+                    Text(
+                        text = "Uji Koneksi Gemini API Sekarang",
+                        color = CyanAccent,
+                        fontWeight = FontWeight.Bold,
+                        fontSize = 13.sp
+                    )
+                }
+
+                connectionTestStatus?.let { status ->
+                    val isSuccess = status.contains("Berhasil", ignoreCase = true)
+                    Box(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .clip(RoundedCornerShape(8.dp))
+                            .background(if (isSuccess) Slate900 else Slate900)
+                            .border(1.dp, if (isSuccess) NeonGreen else NeonRed, RoundedCornerShape(8.dp))
+                            .padding(12.dp)
+                    ) {
+                        Column {
+                            Row(verticalAlignment = Alignment.CenterVertically) {
+                                Text(
+                                    text = if (isSuccess) "SUKSES" else "GAGAL",
+                                    color = if (isSuccess) NeonGreen else NeonRed,
+                                    fontWeight = FontWeight.Bold,
+                                    fontSize = 11.sp
+                                )
+                                Spacer(modifier = Modifier.weight(1f))
+                                Text(
+                                    text = "Tutup",
+                                    color = Slate400,
+                                    fontSize = 10.sp,
+                                    modifier = Modifier.clickable { onClearTestStatus() }
+                                )
+                            }
+                            Spacer(modifier = Modifier.height(4.dp))
+                            Text(
+                                text = status,
+                                color = Color.White,
+                                fontSize = 12.sp,
+                                lineHeight = 16.sp
+                            )
+                        }
+                    }
+                }
+            }
+        }
+
+        // Preferences Card (Alerts)
+        Card(
+            modifier = Modifier.fillMaxWidth(),
+            colors = CardDefaults.cardColors(containerColor = DarkSurface),
+            shape = RoundedCornerShape(14.dp),
+            border = androidx.compose.foundation.BorderStroke(1.dp, DarkBorder)
+        ) {
+            Column(
+                modifier = Modifier.padding(14.dp),
+                verticalArrangement = Arrangement.spacedBy(12.dp)
+            ) {
+                Text(
+                    text = "NOTIFIKASI & FEEDBACK",
+                    color = Slate400,
+                    fontSize = 11.sp,
+                    fontWeight = FontWeight.Bold,
+                    letterSpacing = 0.8.sp
+                )
+
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.SpaceBetween,
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        Icon(Icons.Default.Vibration, contentDescription = "Getar", tint = CyanAccent, modifier = Modifier.size(18.dp))
+                        Spacer(modifier = Modifier.width(8.dp))
+                        Column {
+                            Text("Getar pada Sinyal Valid", color = Color.White, fontSize = 13.sp, fontWeight = FontWeight.SemiBold)
+                            Text("Haptic feedback saat BUY/SELL terkonfirmasi", color = Slate400, fontSize = 11.sp)
+                        }
+                    }
+                    Switch(
+                        checked = settings.vibrationEnabled,
+                        onCheckedChange = onUpdateVibration,
+                        colors = SwitchDefaults.colors(
+                            checkedThumbColor = CyanAccent,
+                            checkedTrackColor = Slate800,
+                            uncheckedThumbColor = Slate400,
+                            uncheckedTrackColor = Slate900
+                        )
+                    )
+                }
+
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.SpaceBetween,
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        Icon(Icons.AutoMirrored.Filled.VolumeUp, contentDescription = "Suara", tint = CyanAccent, modifier = Modifier.size(18.dp))
+                        Spacer(modifier = Modifier.width(8.dp))
+                        Column {
+                            Text("Suara Alarm Sinyal", color = Color.White, fontSize = 13.sp, fontWeight = FontWeight.SemiBold)
+                            Text("Bunyikan nada saat sinyal masuk", color = Slate400, fontSize = 11.sp)
+                        }
+                    }
+                    Switch(
+                        checked = settings.soundEnabled,
+                        onCheckedChange = onUpdateSound,
+                        colors = SwitchDefaults.colors(
+                            checkedThumbColor = CyanAccent,
+                            checkedTrackColor = Slate800,
+                            uncheckedThumbColor = Slate400,
+                            uncheckedTrackColor = Slate900
+                        )
+                    )
+                }
+            }
+        }
+
+        // Security Warning Card (Mandatory per guidelines)
+        Card(
+            modifier = Modifier.fillMaxWidth(),
+            colors = CardDefaults.cardColors(containerColor = Slate900),
+            shape = RoundedCornerShape(14.dp),
+            border = androidx.compose.foundation.BorderStroke(1.dp, DarkBorder)
+        ) {
+            Column(modifier = Modifier.padding(14.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    Icon(
+                        imageVector = Icons.Default.Security,
+                        contentDescription = "Keamanan",
+                        tint = CyanAccent,
+                        modifier = Modifier.size(18.dp)
+                    )
+                    Spacer(modifier = Modifier.width(8.dp))
+                    Text(
+                        text = "PERINGATAN KEAMANAN API KEY",
                         color = Color.White,
                         fontSize = 12.sp,
                         fontWeight = FontWeight.Bold
                     )
                 }
-
                 Text(
-                    text = "1. Buka aplikasi MetaTrader 5 pada ponsel Anda.\n" +
-                        "2. Pilih chart candlestick (hindari bar chart atau line chart tipis).\n" +
-                        "3. Gunakan skema warna 'Green on Black' atau 'Black on White' agar kontras candle jelas.\n" +
-                        "4. Aktifkan Floating Window dari UDA AI TRADER lalu buka kembali MT5.\n" +
-                        "5. Floating Window dapat digeser ke sudut layar agar tidak menutupi tombol transaksi MT5.",
+                    text = "API Key disimpan secara lokal pada perangkat Anda atau disuntikkan saat kompilasi via BuildConfig. Jangan membagikan file APK atau source code yang mengandung API Key aktif kepada publik untuk mencegah penggunaan kuota yang tidak sah.",
                     color = Slate400,
                     fontSize = 11.sp,
-                    lineHeight = 18.sp
+                    lineHeight = 16.sp
                 )
             }
         }

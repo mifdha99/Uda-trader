@@ -18,20 +18,46 @@ jobs:
       - name: Checkout Repository
         uses: actions/checkout@v4
 
-      - name: Set up JDK 17
+      - name: Set up JDK 21
         uses: actions/setup-java@v4
         with:
-          java-version: "17"
+          java-version: "21"
           distribution: "temurin"
+
+      - name: Setup Gradle
+        uses: gradle/actions/setup-gradle@v4
 
       - name: Grant Execute Permission for Gradle Launcher
         run: chmod +x ./gradlew
 
-      - name: Verify Gradle
+      - name: Prepare Secrets and Debug Keystore
+        env:
+          GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
+        run: |
+          # Configure .env from GitHub Secrets if available, otherwise fallback to .env.example
+          if [ -n "$GEMINI_API_KEY" ]; then
+            echo "GEMINI_API_KEY=\"$GEMINI_API_KEY\"" > .env
+          elif [ -f .env.example ]; then
+            cp .env.example .env
+          else
+            echo "GEMINI_API_KEY=\"your_api_key_here\"" > .env
+          fi
+
+          # Ensure debug.keystore exists for signing config in headless CI
+          if [ ! -f debug.keystore ]; then
+            keytool -genkeypair -v -keystore debug.keystore -storepass android -alias androiddebugkey -keypass android -keyalg RSA -keysize 2048 -validity 10000 -dname "CN=Android Debug,O=Android,C=US"
+          fi
+
+      - name: Verify Gradle Environment
         run: ./gradlew --version
 
       - name: Build Debug APK
         run: ./gradlew assembleDebug --stacktrace
+
+      - name: Verify Output APK Exists
+        run: |
+          test -f app/build/outputs/apk/debug/app-debug.apk
+          ls -lh app/build/outputs/apk/debug/app-debug.apk
 
       - name: Upload Debug APK Artifact
         uses: actions/upload-artifact@v4
