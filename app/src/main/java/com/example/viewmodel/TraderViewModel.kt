@@ -206,11 +206,11 @@ class TraderViewModel(application: Application) : AndroidViewModel(application) 
     fun testConnection() {
         viewModelScope.launch {
             _connectionTestStatus.value = "Menghubungi endpoint..."
-            val result = aiEngine.testConnection()
-            result.onSuccess { msg ->
+            val result: Result<String> = aiEngine.testConnection()
+            result.onSuccess { msg: String ->
                 _connectionTestStatus.value = "SUKSES: $msg"
-            }.onFailure { err ->
-                _connectionTestStatus.value = "GAGAL: ${err.localizedMessage}"
+            }.onFailure { err: Throwable ->
+                _connectionTestStatus.value = "GAGAL: ${err.localizedMessage ?: "Terjadi kesalahan"}"
             }
         }
     }

@@ -20,6 +20,7 @@ import com.example.model.AutoTradingState
 import com.example.model.Candle
 import com.example.model.ConfirmationType
 import com.example.model.DataSourceMode
+import com.example.model.EngineState
 import com.example.model.OlympAccountBalance
 import com.example.model.OlympOrder
 import com.example.model.SignalType
@@ -77,6 +78,10 @@ class TradingRepository(
     // Screen capture service status (MT5 Mode)
     private val _isCapturing = MutableStateFlow(false)
     val isCapturing: StateFlow<Boolean> = _isCapturing.asStateFlow()
+
+    // Screen capture pause status
+    private val _isPaused = MutableStateFlow(false)
+    val isPaused: StateFlow<Boolean> = _isPaused.asStateFlow()
 
     // AI Analysis in-flight status
     private val _isAnalyzing = MutableStateFlow(false)
@@ -142,6 +147,36 @@ class TradingRepository(
         }
     }
 
+    fun setPaused(paused: Boolean) {
+        _isPaused.value = paused
+        if (paused) {
+            _statusMessage.value = "Pemantauan dijeda (JEDA)."
+        } else {
+            _statusMessage.value = "Pemantauan dilanjutkan (LANJUT)."
+        }
+    }
+
+    fun notifyStreamDisconnected() {
+        _isCapturing.value = false
+        _isPaused.value = false
+        _statusMessage.value = "LIVE SCREEN TERPUTUS: Sesi proyeksi layar terputus."
+        _currentSignal.value = TradingSignal(
+            state = EngineState.STREAM_DISCONNECTED,
+            signal = SignalType.WAIT,
+            pair = "TIDAK DIKENALI",
+            timeframe = "M5",
+            entry = null,
+            stopLoss = null,
+            takeProfit = null,
+            riskReward = "1:2",
+            confidence = 0.0,
+            trend = "DISCONNECTED",
+            confirmation = ConfirmationType.UNCONFIRMED,
+            reason = "Live screen terputus. Buka kembali aplikasi dan mulai tangkapan layar.",
+            timestamp = ""
+        )
+    }
+
     fun setFloatingOverlayVisible(visible: Boolean) {
         _isFloatingOverlayVisible.value = visible
     }
@@ -179,14 +214,15 @@ class TradingRepository(
                 _statusMessage.value = "Error Analisis: $errorMsg"
 
                 _currentSignal.value = TradingSignal(
+                    state = EngineState.INVALID_DATA,
                     signal = SignalType.WAIT,
-                    pair = "UNKNOWN",
+                    pair = "TIDAK DIKENALI",
                     timeframe = "M5",
                     entry = null,
                     stopLoss = null,
                     takeProfit = null,
                     riskReward = "1:2",
-                    confidence = null,
+                    confidence = 0.0,
                     trend = "UNKNOWN",
                     confirmation = ConfirmationType.UNCONFIRMED,
                     reason = "Kendala koneksi/analisis: $errorMsg",
