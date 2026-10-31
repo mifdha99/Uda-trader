@@ -34,6 +34,7 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.ContentCopy
+import androidx.compose.material.icons.filled.DragHandle
 import androidx.compose.material.icons.filled.KeyboardArrowDown
 import androidx.compose.material.icons.filled.KeyboardArrowUp
 import androidx.compose.material3.Button
@@ -73,9 +74,19 @@ import androidx.savedstate.setViewTreeSavedStateRegistryOwner
 import com.example.data.pref.AppSettings
 import com.example.data.repository.TradingRepository
 import com.example.model.ConfirmationType
+import com.example.model.EngineState
 import com.example.model.SignalType
 import com.example.model.TradingSignal
 
+/**
+ * Floating Overlay Window Service.
+ * Features:
+ * - Dedicated drag handle bar to isolate drag gestures from button clicks.
+ * - Screen boundary clamping to keep HUD inside display limits.
+ * - Persistent coordinate saving & restoration.
+ * - Live display of 10 Engine States, verified or TIDAK DIKENALI symbols, TIDAK TERSEDIA prices.
+ * - Strict COPY button conforming to Section 10 formatting rules.
+ */
 class FloatingWindowService : Service() {
 
     companion object {
@@ -159,8 +170,8 @@ class FloatingWindowService : Service() {
         }
 
         val savedSettings = appSettings.getSettings()
-        val startX = savedSettings.overlayX.coerceIn(0, screenWidth - 250)
-        val startY = savedSettings.overlayY.coerceIn(50, screenHeight - 250)
+        val startX = savedSettings.overlayX.coerceIn(0, (screenWidth - 260).coerceAtLeast(0))
+        val startY = savedSettings.overlayY.coerceIn(50, (screenHeight - 300).coerceAtLeast(50))
 
         layoutParams = WindowManager.LayoutParams(
             WindowManager.LayoutParams.WRAP_CONTENT,
@@ -181,14 +192,18 @@ class FloatingWindowService : Service() {
 
             setContent {
                 val currentSignal by repository.currentSignal.collectAsState()
+                val engineState by repository.engineState.collectAsState()
                 val isCapturing by repository.isCapturing.collectAsState()
+                val isPaused by repository.isPaused.collectAsState()
                 val isAnalyzing by repository.isAnalyzing.collectAsState()
                 val settings by appSettings.settingsFlow.collectAsState()
 
                 FloatingOverlayContent(
                     signal = currentSignal,
+                    engineState = engineState,
                     activeTimeframe = settings.activeTimeframe.code,
                     isCapturing = isCapturing,
+                    isPaused = isPaused,
                     isAnalyzing = isAnalyzing,
                     onClose = {
                         hideOverlay()
@@ -198,27 +213,37 @@ class FloatingWindowService : Service() {
             }
         }
 
-        // Draggable listener with boundary constraints and non-interfering click tolerance
+        // Touch listener dedicated strictly to dragging:
+        // Only touches initiated in the top header drag-handle area trigger window moves.
+        // Clicks on buttons, copy, minimize, and close are passed through directly.
+        val dragHandleZoneHeightPx = (46 * resources.displayMetrics.density).toInt()
+
         composeView.setOnTouchListener { _, event ->
             val params = layoutParams ?: return@setOnTouchListener false
             when (event.action) {
                 MotionEvent.ACTION_DOWN -> {
-                    initialX = params.x
-                    initialY = params.y
-                    initialTouchX = event.rawX
-                    initialTouchY = event.rawY
-                    isDragging = false
-                    false // allow child click events to receive DOWN
+                    // Only intercept if touched in top drag handle area
+                    if (event.y <= dragHandleZoneHeightPx) {
+                        initialX = params.x
+                        initialY = params.y
+                        initialTouchX = event.rawX
+                        initialTouchY = event.rawY
+                        isDragging = false
+                        false // let Compose handle potential child buttons inside header if any
+                    } else {
+                        false
+                    }
                 }
                 MotionEvent.ACTION_MOVE -> {
                     val deltaX = (event.rawX - initialTouchX).toInt()
                     val deltaY = (event.rawY - initialTouchY).toInt()
 
-                    if (Math.abs(deltaX) > 16 || Math.abs(deltaY) > 16) {
+                    if (Math.abs(deltaX) > 12 || Math.abs(deltaY) > 12) {
                         isDragging = true
-                        // Clamp coordinates to prevent floating window from going completely off-screen
-                        val clampedX = (initialX + deltaX).coerceIn(0, (screenWidth - 100).coerceAtLeast(100))
-                        val clampedY = (initialY + deltaY).coerceIn(40, (screenHeight - 120).coerceAtLeast(120))
+                        updateScreenMetrics()
+                        // Boundary clamping: keep window fully on screen
+                        val clampedX = (initialX + deltaX).coerceIn(0, (screenWidth - 120).coerceAtLeast(120))
+                        val clampedY = (initialY + deltaY).coerceIn(40, (screenHeight - 140).coerceAtLeast(140))
                         params.x = clampedX
                         params.y = clampedY
                         windowManager?.updateViewLayout(composeView, params)
@@ -273,8 +298,10 @@ class FloatingWindowService : Service() {
 @Composable
 fun FloatingOverlayContent(
     signal: TradingSignal?,
+    engineState: EngineState,
     activeTimeframe: String,
     isCapturing: Boolean,
+    isPaused: Boolean,
     isAnalyzing: Boolean,
     onClose: () -> Unit
 ) {
@@ -282,11 +309,11 @@ fun FloatingOverlayContent(
     var isMinimized by remember { mutableStateOf(false) }
 
     val signalType = signal?.signal ?: SignalType.WAIT
-    val pair = signal?.pair ?: "MT5"
+    val pairText = signal?.formattedSymbol() ?: "TIDAK DIKENALI"
     val timeframe = signal?.timeframe?.ifBlank { activeTimeframe } ?: activeTimeframe
-    val entry = signal?.entry?.let { String.format("%.5f", it) } ?: "---"
-    val stopLoss = signal?.stopLoss?.let { String.format("%.5f", it) } ?: "---"
-    val takeProfit = signal?.takeProfit?.let { String.format("%.5f", it) } ?: "---"
+    val entryText = signal?.formattedEntry() ?: "TIDAK TERSEDIA"
+    val stopLossText = signal?.formattedStopLoss() ?: "TIDAK TERSEDIA"
+    val takeProfitText = signal?.formattedTakeProfit() ?: "TIDAK TERSEDIA"
     val riskReward = signal?.riskReward ?: "1:2"
     val confidenceText = signal?.formattedConfidence() ?: "0%"
     val confirmation = signal?.confirmation ?: ConfirmationType.UNCONFIRMED
@@ -298,6 +325,20 @@ fun FloatingOverlayContent(
         SignalType.WAIT -> Triple(Color(0xFFF59E0B), Color(0x33F59E0B), "🟡 WAIT")
     }
 
+    // Engine State badge color & label
+    val (stateBadgeBg, stateBadgeColor, stateLabel) = when (engineState) {
+        EngineState.BUY -> Triple(Color(0x3310B981), Color(0xFF10B981), "BUY NOW")
+        EngineState.SELL -> Triple(Color(0x33F43F5E), Color(0xFFF43F5E), "SELL NOW")
+        EngineState.WAIT -> Triple(Color(0x33F59E0B), Color(0xFFF59E0B), "WAIT")
+        EngineState.WAITING_CHART -> Triple(Color(0x3364748B), Color(0xFF94A3B8), "MENUNGGU CHART")
+        EngineState.READING_CHART -> Triple(Color(0x330284C7), Color(0xFF38BDF8), "MEMBACA CHART")
+        EngineState.VALIDATING_DATA -> Triple(Color(0x338B5CF6), Color(0xFFA78BFA), "MEMVALIDASI DATA")
+        EngineState.ANALYZING -> Triple(Color(0x3306B6D4), Color(0xFF22D3EE), "MENGANALISIS")
+        EngineState.INVALID_DATA -> Triple(Color(0x33EF4444), Color(0xFFF87171), "DATA TIDAK VALID")
+        EngineState.STREAM_DISCONNECTED -> Triple(Color(0x33EF4444), Color(0xFFF87171), "STREAM TERPUTUS")
+        EngineState.DATA_EXPIRED -> Triple(Color(0x33F97316), Color(0xFFFB923C), "DATA KEDALUWARSA")
+    }
+
     Surface(
         modifier = Modifier
             .padding(6.dp)
@@ -307,7 +348,7 @@ fun FloatingOverlayContent(
                 brush = Brush.linearGradient(listOf(signalColor.copy(alpha = 0.85f), Color(0xFF1E293B))),
                 shape = RoundedCornerShape(16.dp)
             ),
-        color = Color(0xF2090D16), // Dark translucent HUD
+        color = Color(0xF2090D16),
         shadowElevation = 10.dp
     ) {
         if (isMinimized) {
@@ -342,10 +383,26 @@ fun FloatingOverlayContent(
             // Full Detailed Floating HUD Card
             Column(
                 modifier = Modifier
-                    .width(270.dp)
+                    .width(280.dp)
                     .padding(12.dp)
             ) {
-                // Header Bar: App Name + Capture status + Minimize & Close
+                // Dedicated Drag Handle Bar
+                Box(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(bottom = 6.dp),
+                    contentAlignment = Alignment.Center
+                ) {
+                    Box(
+                        modifier = Modifier
+                            .width(42.dp)
+                            .height(4.dp)
+                            .clip(RoundedCornerShape(2.dp))
+                            .background(Color(0xFF64748B))
+                    )
+                }
+
+                // Header Bar: Drag Icon + Engine State + Minimize & Close
                 Row(
                     modifier = Modifier.fillMaxWidth(),
                     verticalAlignment = Alignment.CenterVertically,
@@ -355,21 +412,27 @@ fun FloatingOverlayContent(
                         verticalAlignment = Alignment.CenterVertically,
                         horizontalArrangement = Arrangement.spacedBy(6.dp)
                     ) {
+                        Icon(
+                            imageVector = Icons.Default.DragHandle,
+                            contentDescription = "Drag Handle",
+                            tint = Color(0xFF64748B),
+                            modifier = Modifier.size(16.dp)
+                        )
                         Box(
                             modifier = Modifier
-                                .size(8.dp)
-                                .background(
-                                    if (isCapturing) Color(0xFF10B981) else Color(0xFF64748B),
-                                    CircleShape
-                                )
-                        )
-                        Text(
-                            text = "UNIVERSAL ENGINE",
-                            color = Color(0xFF38BDF8),
-                            fontWeight = FontWeight.Black,
-                            fontSize = 11.sp,
-                            letterSpacing = 0.5.sp
-                        )
+                                .clip(RoundedCornerShape(6.dp))
+                                .background(stateBadgeBg)
+                                .border(1.dp, stateBadgeColor.copy(alpha = 0.5f), RoundedCornerShape(6.dp))
+                                .padding(horizontal = 6.dp, vertical = 2.dp)
+                        ) {
+                            Text(
+                                text = stateLabel,
+                                color = stateBadgeColor,
+                                fontWeight = FontWeight.Bold,
+                                fontSize = 9.sp,
+                                letterSpacing = 0.5.sp
+                            )
+                        }
                     }
 
                     Row {
@@ -449,7 +512,7 @@ fun FloatingOverlayContent(
                     horizontalArrangement = Arrangement.SpaceBetween
                 ) {
                     MetricItem(label = "TIMEFRAME:", value = timeframe)
-                    MetricItem(label = "PAIR:", value = pair)
+                    MetricItem(label = "SIMBOL:", value = pairText)
                 }
 
                 Spacer(modifier = Modifier.height(4.dp))
@@ -458,7 +521,7 @@ fun FloatingOverlayContent(
                     modifier = Modifier.fillMaxWidth(),
                     horizontalArrangement = Arrangement.SpaceBetween
                 ) {
-                    MetricItem(label = "ENTRY:", value = entry, highlight = true)
+                    MetricItem(label = "ENTRY:", value = entryText, highlight = true)
                     MetricItem(label = "RISK REWARD:", value = riskReward)
                 }
 
@@ -468,8 +531,8 @@ fun FloatingOverlayContent(
                     modifier = Modifier.fillMaxWidth(),
                     horizontalArrangement = Arrangement.SpaceBetween
                 ) {
-                    MetricItem(label = "STOP LOSS:", value = stopLoss, color = Color(0xFFF87171))
-                    MetricItem(label = "TAKE PROFIT:", value = takeProfit, color = Color(0xFF4ADE80))
+                    MetricItem(label = "STOP LOSS:", value = stopLossText, color = Color(0xFFF87171))
+                    MetricItem(label = "TAKE PROFIT:", value = takeProfitText, color = Color(0xFF4ADE80))
                 }
 
                 Spacer(modifier = Modifier.height(8.dp))
@@ -488,9 +551,9 @@ fun FloatingOverlayContent(
 
                     Button(
                         onClick = {
+                            val copyContent = signal?.formattedCopyText() ?: "[UDA AI TRADER]\nSinyal: WAIT\nStatus: MENUNGGU CHART"
                             val clipboard = context.getSystemService(Context.CLIPBOARD_SERVICE) as ClipboardManager
-                            val clipText = "UDA AI TRADER [$signalText]\nPair: $pair | TF: $timeframe\nEntry: $entry\nSL: $stopLoss\nTP: $takeProfit\nRR: $riskReward"
-                            val clip = ClipData.newPlainText("UdaTraderSignal", clipText)
+                            val clip = ClipData.newPlainText("UdaTraderSignal", copyContent)
                             clipboard.setPrimaryClip(clip)
                             Toast.makeText(context, "Sinyal disalin ke Clipboard!", Toast.LENGTH_SHORT).show()
                         },
@@ -513,7 +576,7 @@ fun FloatingOverlayContent(
                 if (isAnalyzing) {
                     Spacer(modifier = Modifier.height(4.dp))
                     Text(
-                        text = "⚡ Membaca chart visual MT5...",
+                        text = "⚡ Membaca chart visual...",
                         color = Color(0xFF38BDF8),
                         fontSize = 9.sp,
                         fontWeight = FontWeight.Medium
@@ -541,7 +604,7 @@ private fun MetricItem(
         Text(
             text = value,
             color = if (highlight) Color(0xFF38BDF8) else color,
-            fontSize = 12.sp,
+            fontSize = 11.sp,
             fontWeight = FontWeight.Bold,
             fontFamily = FontFamily.Monospace
         )
@@ -549,7 +612,7 @@ private fun MetricItem(
 }
 
 /**
- * Custom Service-level SavedStateRegistry and LifecycleOwner to host Jetpack Compose cleanly.
+ * Service-level SavedStateRegistry and LifecycleOwner to host Jetpack Compose.
  */
 class ServiceSavedStateLifecycleOwner : LifecycleOwner, ViewModelStoreOwner, SavedStateRegistryOwner {
     private val lifecycleRegistry = LifecycleRegistry(this)

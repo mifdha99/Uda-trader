@@ -1,8 +1,9 @@
 package com.example.data.engine
 
 import android.graphics.Bitmap
-import android.util.Log
 import com.example.model.ConfirmationType
+import com.example.model.DataVerificationLevel
+import com.example.model.EngineState
 import com.example.model.Mt5Timeframe
 import com.example.model.SignalType
 import com.example.model.TechnicalMetrics
@@ -13,44 +14,61 @@ import java.util.Locale
 import java.util.TimeZone
 
 /**
- * Universal Signal Engine - Core on-device quantitative technical analysis brain for UDA AI TRADER.
- * Analyzes chart data strictly locally using EMA, RSI, ATR, Price Action, and Confluence Scoring.
+ * Universal Signal Engine - 100% On-Device Quantitative Trading Analysis Engine.
+ * Operates completely locally without any backend, server, or cloud AI.
+ *
+ * Implements:
+ * - 10 Discrete Engine States
+ * - EMA 9 / EMA 21 Trend & Dynamic Cross
+ * - RSI 14 Momentum & Extremes Guard
+ * - ATR 14 Volatility
+ * - Support & Resistance Confluence
+ * - Candlestick Price Action Confirmations
+ * - Strict Data Integrity: Zero fabricated prices, zero default symbol assumptions.
  */
 class UniversalSignalEngine {
 
     companion object {
-        private const val TAG = "UniversalSignalEngine"
         private const val FAST_EMA_PERIOD = 9
         private const val SLOW_EMA_PERIOD = 21
         private const val RSI_PERIOD = 14
         private const val ATR_PERIOD = 14
-        private const val CONFIDENCE_THRESHOLD = 70.0 // Minimum 70% confidence for BUY/SELL
+        private const val CONFIDENCE_THRESHOLD = 70.0 // Min 70% confidence for BUY/SELL
+        const val DATA_EXPIRATION_THRESHOLD_MS = 15000L // 15 seconds expiration threshold
     }
 
     private val chartScanner = VisualChartScanner()
 
-    // State machine for signal stability & cooldown
-    private var lastSignal: TradingSignal? = null
+    // State stability & cooldown
+    private var lastActionableSignal: TradingSignal? = null
     private var lastSignalTimeMs: Long = 0L
-    private val signalCooldownMs = 8000L // 8-second cooldown between directional flips
+    private val signalCooldownMs = 8000L
 
     /**
-     * Master analysis entry point: processes captured MT5 bitmap into a TradingSignal.
+     * Master processing pipeline for captured screen frames.
      */
     fun processChartFrame(
         bitmap: Bitmap,
         activeTimeframe: Mt5Timeframe
     ): TradingSignal {
         val now = getCurrentIsoTimestamp()
+        val nowMs = System.currentTimeMillis()
 
-        // 1. Scan image for candlesticks & scale
+        // 1. Scan image for candlesticks & layout
         val scanResult = chartScanner.scanChart(bitmap, activeTimeframe)
 
         if (scanResult is ChartScanResult.Invalid) {
+            val isWaiting = scanResult.reason.contains("MENUNGGU CHART", ignoreCase = true)
+            val state = if (isWaiting) EngineState.WAITING_CHART else EngineState.INVALID_DATA
+
             return TradingSignal(
+                state = state,
                 signal = SignalType.WAIT,
-                pair = "MT5 CHART",
+                pair = "TIDAK DIKENALI",
                 timeframe = activeTimeframe.code,
+                detectedTimeframe = null,
+                isTimeframeMismatch = false,
+                verificationLevel = DataVerificationLevel.INVALID,
                 entry = null,
                 stopLoss = null,
                 takeProfit = null,
@@ -60,6 +78,7 @@ class UniversalSignalEngine {
                 confirmation = ConfirmationType.UNCONFIRMED,
                 reason = scanResult.reason,
                 timestamp = now,
+                timestampMillis = nowMs,
                 metrics = TechnicalMetrics()
             )
         }
@@ -67,13 +86,19 @@ class UniversalSignalEngine {
         val success = scanResult as ChartScanResult.Success
         val candles = success.candles
         val detectedTf = success.detectedTimeframe
+        val detectedPair = success.detectedPair ?: "TIDAK DIKENALI"
 
-        // 2. Timeframe Consistency Check
-        if (detectedTf != null && detectedTf != activeTimeframe) {
+        // 2. Timeframe Consistency Validation
+        val isMismatch = detectedTf != null && detectedTf != activeTimeframe
+        if (isMismatch) {
             return TradingSignal(
+                state = EngineState.WAIT,
                 signal = SignalType.WAIT,
-                pair = success.detectedPair,
+                pair = detectedPair,
                 timeframe = activeTimeframe.code,
+                detectedTimeframe = detectedTf?.code,
+                isTimeframeMismatch = true,
+                verificationLevel = success.verificationLevel,
                 entry = null,
                 stopLoss = null,
                 takeProfit = null,
@@ -81,13 +106,14 @@ class UniversalSignalEngine {
                 confidence = 0.0,
                 trend = "MISMATCH",
                 confirmation = ConfirmationType.UNCONFIRMED,
-                reason = "PERINGATAN TIMEFRAME: Timeframe aplikasi (${activeTimeframe.code}) berbeda dengan chart MT5 (${detectedTf.code}). Sesuaikan pilihan timeframe Anda.",
+                reason = "PERINGATAN TIMEFRAME: Timeframe aplikasi (${activeTimeframe.code}) berbeda dengan chart visual (${detectedTf?.code}). Ubah timeframe agar sinkron.",
                 timestamp = now,
+                timestampMillis = nowMs,
                 metrics = TechnicalMetrics(candleCount = candles.size)
             )
         }
 
-        // 3. Calculate Technical Indicators
+        // 3. Technical Indicators Calculation
         val closePrices = candles.map { it.close }
         val fastEmaList = TechnicalIndicators.calculateEMA(closePrices, FAST_EMA_PERIOD)
         val slowEmaList = TechnicalIndicators.calculateEMA(closePrices, SLOW_EMA_PERIOD)
@@ -103,7 +129,7 @@ class UniversalSignalEngine {
         val prevFastEma = if (fastEmaList.size >= 2) fastEmaList[fastEmaList.size - 2] else latestFastEma
         val prevSlowEma = if (slowEmaList.size >= 2) slowEmaList[slowEmaList.size - 2] else latestSlowEma
 
-        // 4. Identify Trend & Momentum Direction
+        // 4. Trend & Momentum Direction
         val isBullishTrend = latestFastEma > latestSlowEma && latestCandle.close >= latestSlowEma
         val isBearishTrend = latestFastEma < latestSlowEma && latestCandle.close <= latestSlowEma
         val isEmaGoldenCross = prevFastEma <= prevSlowEma && latestFastEma > latestSlowEma
@@ -115,7 +141,7 @@ class UniversalSignalEngine {
             else -> "SIDEWAYS"
         }
 
-        // 5. Candle Pattern Confirmation
+        // 5. Candlestick Confirmation
         val isBullEngulf = TechnicalIndicators.isBullishEngulfing(previousCandle, latestCandle)
         val isBearEngulf = TechnicalIndicators.isBearishEngulfing(previousCandle, latestCandle)
         val isHammer = latestCandle.isHammer()
@@ -133,43 +159,40 @@ class UniversalSignalEngine {
             else -> "Price Action Normal"
         }
 
-        // 6. Confluence & Deterministic Confidence Scoring (0 - 100)
+        // 6. Confluence & Deterministic Scoring (0.0 to 100.0%)
         var buyScore = 0.0
         var sellScore = 0.0
 
-        // Factor A: Trend Confluence (max 25 pts)
+        // Trend Confluence (max 25 pts)
         if (isBullishTrend) buyScore += 20.0
         if (isEmaGoldenCross) buyScore += 5.0
         if (isBearishTrend) sellScore += 20.0
         if (isEmaDeathCross) sellScore += 5.0
 
-        // Factor B: RSI Momentum Confluence (max 25 pts)
+        // RSI Momentum Confluence (max 25 pts)
         when {
-            // Healthy Bullish Momentum: 50 <= RSI <= 68
             rsi in 50.0..68.0 -> buyScore += 25.0
             rsi in 45.0..50.0 -> buyScore += 15.0
-            // Healthy Bearish Momentum: 32 <= RSI <= 50
             rsi in 32.0..50.0 -> sellScore += 25.0
             rsi in 50.0..55.0 -> sellScore += 15.0
-            // Overbought / Oversold Penalties
-            rsi > 70.0 -> buyScore -= 20.0 // Danger of buying at the top
-            rsi < 30.0 -> sellScore -= 20.0 // Danger of selling at the bottom
+            rsi > 70.0 -> buyScore -= 20.0 // Overbought penalty
+            rsi < 30.0 -> sellScore -= 20.0 // Oversold penalty
         }
 
-        // Factor C: Candlestick Confirmation (max 25 pts)
+        // Candlestick Confirmation (max 25 pts)
         if (isBullEngulf || isHammer || isStrongBull) buyScore += 25.0
         else if (latestCandle.isBullish && latestCandle.lowerWickRatio > 0.3) buyScore += 15.0
 
         if (isBearEngulf || isShootingStar || isStrongBear) sellScore += 25.0
         else if (!latestCandle.isBullish && latestCandle.upperWickRatio > 0.3) sellScore += 15.0
 
-        // Factor D: Key Level Proximity / S&R (max 15 pts)
+        // Support / Resistance Proximity (max 15 pts)
         val distToSupport = Math.abs(latestCandle.close - support)
         val distToResistance = Math.abs(resistance - latestCandle.close)
         if (distToSupport < (atr * 1.2) && latestCandle.isBullish) buyScore += 15.0
         if (distToResistance < (atr * 1.2) && !latestCandle.isBullish) sellScore += 15.0
 
-        // Factor E: Quality of visual capture (max 10 pts)
+        // Visual Quality (max 10 pts)
         val qualityBonus = success.confidenceQuality * 10.0
         buyScore += qualityBonus
         sellScore += qualityBonus
@@ -177,8 +200,6 @@ class UniversalSignalEngine {
         val finalBuyConfidence = buyScore.coerceIn(0.0, 98.0)
         val finalSellConfidence = sellScore.coerceIn(0.0, 98.0)
 
-        // 7. Signal Determination
-        val entryPrice = latestCandle.close
         val metrics = TechnicalMetrics(
             fastEma = latestFastEma,
             slowEma = latestSlowEma,
@@ -190,21 +211,32 @@ class UniversalSignalEngine {
             candleCount = candles.size
         )
 
-        val currentTimeMs = System.currentTimeMillis()
-        val inCooldown = (currentTimeMs - lastSignalTimeMs) < signalCooldownMs
+        // Enforce strict price integrity:
+        // Absolute prices are ONLY provided if price scale is calibrated.
+        // Otherwise null -> displays "TIDAK TERSEDIA".
+        val entryPrice: Double? = success.currentPrice
+        val (stopLoss: Double?, takeProfit: Double?) = if (entryPrice != null && atr > 0) {
+            val slDist = atr * 1.5
+            val tpDist = slDist * 2.0
+            Pair(entryPrice - slDist, entryPrice + tpDist)
+        } else {
+            Pair(null, null)
+        }
 
+        val inCooldown = (nowMs - lastSignalTimeMs) < signalCooldownMs
+
+        // 7. Determine Signal & Engine State
         if (finalBuyConfidence >= CONFIDENCE_THRESHOLD && isBullishTrend && rsi <= 68.0) {
-            val slDistance = (atr * 1.5).coerceAtLeast(0.00060)
-            val tpDistance = slDistance * 2.0 // 1:2 R:R
-            val stopLoss = entryPrice - slDistance
-            val takeProfit = entryPrice + tpDistance
-
-            val reason = "Konfluensi BUY (${finalBuyConfidence.toInt()}%): Trend EMA Bullish, RSI ${String.format(Locale.US, "%.1f", rsi)}, $patternName. Pantulan Support ${String.format(Locale.US, "%.5f", support)}."
+            val reason = "Konfluensi BUY (${finalBuyConfidence.toInt()}%): Trend EMA Bullish, RSI ${String.format(Locale.US, "%.1f", rsi)}, $patternName."
 
             val signal = TradingSignal(
+                state = EngineState.BUY,
                 signal = SignalType.BUY,
-                pair = success.detectedPair,
+                pair = detectedPair,
                 timeframe = activeTimeframe.code,
+                detectedTimeframe = detectedTf?.code,
+                isTimeframeMismatch = false,
+                verificationLevel = success.verificationLevel,
                 entry = entryPrice,
                 stopLoss = stopLoss,
                 takeProfit = takeProfit,
@@ -214,23 +246,23 @@ class UniversalSignalEngine {
                 confirmation = if (isBullEngulf || isHammer) ConfirmationType.CONFIRMED else ConfirmationType.PENDING,
                 reason = reason,
                 timestamp = now,
+                timestampMillis = nowMs,
                 metrics = metrics
             )
-            lastSignal = signal
-            lastSignalTimeMs = currentTimeMs
+            lastActionableSignal = signal
+            lastSignalTimeMs = nowMs
             return signal
         } else if (finalSellConfidence >= CONFIDENCE_THRESHOLD && isBearishTrend && rsi >= 32.0) {
-            val slDistance = (atr * 1.5).coerceAtLeast(0.00060)
-            val tpDistance = slDistance * 2.0 // 1:2 R:R
-            val stopLoss = entryPrice + slDistance
-            val takeProfit = entryPrice - tpDistance
-
-            val reason = "Konfluensi SELL (${finalSellConfidence.toInt()}%): Trend EMA Bearish, RSI ${String.format(Locale.US, "%.1f", rsi)}, $patternName. Penolakan Resistance ${String.format(Locale.US, "%.5f", resistance)}."
+            val reason = "Konfluensi SELL (${finalSellConfidence.toInt()}%): Trend EMA Bearish, RSI ${String.format(Locale.US, "%.1f", rsi)}, $patternName."
 
             val signal = TradingSignal(
+                state = EngineState.SELL,
                 signal = SignalType.SELL,
-                pair = success.detectedPair,
+                pair = detectedPair,
                 timeframe = activeTimeframe.code,
+                detectedTimeframe = detectedTf?.code,
+                isTimeframeMismatch = false,
+                verificationLevel = success.verificationLevel,
                 entry = entryPrice,
                 stopLoss = stopLoss,
                 takeProfit = takeProfit,
@@ -240,26 +272,30 @@ class UniversalSignalEngine {
                 confirmation = if (isBearEngulf || isShootingStar) ConfirmationType.CONFIRMED else ConfirmationType.PENDING,
                 reason = reason,
                 timestamp = now,
+                timestampMillis = nowMs,
                 metrics = metrics
             )
-            lastSignal = signal
-            lastSignalTimeMs = currentTimeMs
+            lastActionableSignal = signal
+            lastSignalTimeMs = nowMs
             return signal
         } else {
-            // WAIT Conditions
             val reasonWait = when {
                 rsi > 70.0 -> "WAIT: RSI Overbought (${String.format(Locale.US, "%.1f", rsi)}) - Risiko koreksi tinggi, jangan kejar BUY."
                 rsi < 30.0 -> "WAIT: RSI Oversold (${String.format(Locale.US, "%.1f", rsi)}) - Risiko rebound tinggi, jangan kejar SELL."
-                trendName == "SIDEWAYS" -> "WAIT: Pasar Sideways/Konsolidasi (EMA 9 & 21 saling berhimpit). Tunggu breakout terkonfirmasi."
-                finalBuyConfidence in 50.0..69.9 -> "WAIT: Setup Bullish belum matang (Confidence ${finalBuyConfidence.toInt()}% < 70%). Menunggu candle close."
-                finalSellConfidence in 50.0..69.9 -> "WAIT: Setup Bearish belum matang (Confidence ${finalSellConfidence.toInt()}% < 70%). Menunggu candle close."
+                trendName == "SIDEWAYS" -> "WAIT: Pasar Sideways (EMA 9 & 21 berhimpit). Tunggu breakout terkonfirmasi."
+                finalBuyConfidence in 50.0..69.9 -> "WAIT: Setup Bullish belum matang (Confidence ${finalBuyConfidence.toInt()}% < 70%). Tunggu candle close."
+                finalSellConfidence in 50.0..69.9 -> "WAIT: Setup Bearish belum matang (Confidence ${finalSellConfidence.toInt()}% < 70%). Tunggu candle close."
                 else -> "WAIT: Kondisi pasar belum memenuhi konfluensi multi-indikator Universal Engine."
             }
 
             return TradingSignal(
+                state = EngineState.WAIT,
                 signal = SignalType.WAIT,
-                pair = success.detectedPair,
+                pair = detectedPair,
                 timeframe = activeTimeframe.code,
+                detectedTimeframe = detectedTf?.code,
+                isTimeframeMismatch = false,
+                verificationLevel = success.verificationLevel,
                 entry = null,
                 stopLoss = null,
                 takeProfit = null,
@@ -269,6 +305,7 @@ class UniversalSignalEngine {
                 confirmation = ConfirmationType.UNCONFIRMED,
                 reason = reasonWait,
                 timestamp = now,
+                timestampMillis = nowMs,
                 metrics = metrics
             )
         }

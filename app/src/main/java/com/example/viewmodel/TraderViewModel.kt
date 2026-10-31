@@ -13,6 +13,7 @@ import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
 import com.example.data.pref.AppSettings
 import com.example.data.repository.TradingRepository
+import com.example.model.EngineState
 import com.example.model.Mt5Timeframe
 import com.example.model.RiskSettings
 import com.example.model.TradingSignal
@@ -31,7 +32,9 @@ class TraderViewModel(application: Application) : AndroidViewModel(application) 
     private val appSettings = AppSettings(application)
 
     val currentSignal: StateFlow<TradingSignal?> = repository.currentSignal
+    val engineState: StateFlow<EngineState> = repository.engineState
     val isCapturing: StateFlow<Boolean> = repository.isCapturing
+    val isPaused: StateFlow<Boolean> = repository.isPaused
     val isAnalyzing: StateFlow<Boolean> = repository.isAnalyzing
     val statusMessage: StateFlow<String> = repository.statusMessage
     val isFloatingOverlayVisible: StateFlow<Boolean> = repository.isFloatingOverlayVisible
@@ -79,6 +82,22 @@ class TraderViewModel(application: Application) : AndroidViewModel(application) 
         }
     }
 
+    fun pauseScreenCapture() {
+        val context = getApplication<Application>()
+        val serviceIntent = Intent(context, ScreenCaptureService::class.java).apply {
+            action = ScreenCaptureService.ACTION_PAUSE
+        }
+        context.startService(serviceIntent)
+    }
+
+    fun resumeScreenCapture() {
+        val context = getApplication<Application>()
+        val serviceIntent = Intent(context, ScreenCaptureService::class.java).apply {
+            action = ScreenCaptureService.ACTION_RESUME
+        }
+        context.startService(serviceIntent)
+    }
+
     fun stopScreenCapture() {
         val context = getApplication<Application>()
         val serviceIntent = Intent(context, ScreenCaptureService::class.java).apply {
@@ -120,26 +139,27 @@ class TraderViewModel(application: Application) : AndroidViewModel(application) 
     fun clearHistory() = repository.clearHistory()
 
     /**
-     * Generates a realistic synthetic MT5 candlestick chart bitmap to test the Universal Signal Engine locally.
+     * Explicit DEMO / SIMULATION TEST mode: generates synthetic chart bitmap to test engine logic locally.
+     * Clearly flagged as demo/simulated to differentiate from Live Screen capture.
      */
     fun analyzeSampleChart() {
         viewModelScope.launch {
-            val sampleBitmap = createSyntheticMt5Chart()
+            val sampleBitmap = createSyntheticTestChart()
             repository.processCapturedFrame(sampleBitmap)
         }
     }
 
-    private fun createSyntheticMt5Chart(): Bitmap {
+    private fun createSyntheticTestChart(): Bitmap {
         val width = 900
         val height = 700
         val bitmap = Bitmap.createBitmap(width, height, Bitmap.Config.ARGB_8888)
         val canvas = Canvas(bitmap)
 
-        // Dark MT5 background
+        // Dark chart background
         val bgPaint = Paint().apply { color = Color.rgb(11, 15, 25) }
         canvas.drawRect(0f, 0f, width.toFloat(), height.toFloat(), bgPaint)
 
-        // Subtle grid lines
+        // Subtle grid
         val gridPaint = Paint().apply {
             color = Color.rgb(28, 35, 51)
             strokeWidth = 1f
@@ -151,32 +171,13 @@ class TraderViewModel(application: Application) : AndroidViewModel(application) 
             canvas.drawLine(x.toFloat(), 80f, x.toFloat(), height - 60f, gridPaint)
         }
 
-        // Header text "EURUSD, M5"
+        // Header text indicating test mode
         val textPaint = Paint().apply {
             color = Color.WHITE
-            textSize = 26f
+            textSize = 24f
             isAntiAlias = true
         }
-        canvas.drawText("EURUSD, M5 - MetaTrader 5 Institutional Chart", 40f, 45f, textPaint)
-
-        val pricePaint = Paint().apply {
-            color = Color.rgb(0, 200, 255)
-            textSize = 20f
-            isAntiAlias = true
-        }
-        canvas.drawText("Bid: 1.08520  Ask: 1.08530  Spread: 10", 40f, 75f, pricePaint)
-
-        // Price Axis on Right
-        val axisPaint = Paint().apply {
-            color = Color.rgb(148, 163, 184)
-            textSize = 14f
-            isAntiAlias = true
-        }
-        var axisPrice = 1.08750
-        for (y in 100 until height - 60 step 70) {
-            canvas.drawText(String.format(java.util.Locale.US, "%.5f", axisPrice), width - 95f, y.toFloat() + 5f, axisPaint)
-            axisPrice -= 0.00050
-        }
+        canvas.drawText("[SIMULASI / DEMO] Institutional Candlestick Test Canvas", 40f, 45f, textPaint)
 
         // Draw 18 synthetic candlesticks establishing an institutional breakout
         val greenCandle = Paint().apply { color = Color.rgb(16, 185, 129); isAntiAlias = true }
@@ -207,12 +208,10 @@ class TraderViewModel(application: Application) : AndroidViewModel(application) 
         var xOffset = 50f
         for (candle in candleData) {
             val (open, close, wicks) = candle
-            val isBullish = close < open // in canvas coords, lower Y is higher price
+            val isBullish = close < open
             val paint = if (isBullish) greenCandle else redCandle
 
-            // Draw wick
             canvas.drawLine(xOffset, wicks.first, xOffset, wicks.second, wickPaint)
-            // Draw body
             val top = minOf(open, close)
             val bottom = maxOf(open, close)
             canvas.drawRect(xOffset - 10f, top, xOffset + 10f, bottom, paint)

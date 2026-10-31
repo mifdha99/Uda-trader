@@ -3,6 +3,8 @@ package com.example.data.db
 import androidx.room.Entity
 import androidx.room.PrimaryKey
 import com.example.model.ConfirmationType
+import com.example.model.DataVerificationLevel
+import com.example.model.EngineState
 import com.example.model.SignalType
 import com.example.model.TradingSignal
 
@@ -24,11 +26,21 @@ data class SignalEntity(
     val timestamp: String
 ) {
     fun toDomain(): TradingSignal {
+        val signalType = SignalType.fromString(signal)
+        val state = when (signalType) {
+            SignalType.BUY -> EngineState.BUY
+            SignalType.SELL -> EngineState.SELL
+            SignalType.WAIT -> EngineState.WAIT
+        }
         return TradingSignal(
             id = id,
-            signal = SignalType.fromString(signal),
+            state = state,
+            signal = signalType,
             pair = pair,
             timeframe = timeframe,
+            detectedTimeframe = timeframe,
+            isTimeframeMismatch = false,
+            verificationLevel = if (entry != null) DataVerificationLevel.VERIFIED else DataVerificationLevel.VISUAL_ESTIMATION,
             entry = entry,
             stopLoss = stopLoss,
             takeProfit = takeProfit,

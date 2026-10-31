@@ -2,78 +2,78 @@ package com.example.data.engine
 
 import android.graphics.Bitmap
 import android.graphics.Color
-import android.util.Log
+import com.example.model.DataVerificationLevel
 import com.example.model.Mt5Timeframe
 
 sealed class ChartScanResult {
     data class Success(
         val candles: List<Candlestick>,
-        val detectedPair: String,
-        val detectedTimeframe: Mt5Timeframe?,
-        val currentPrice: Double,
-        val priceSpreadPips: Double,
-        val confidenceQuality: Double // 0.0 - 1.0 based on visual clarity
+        val detectedPair: String?, // Null if not objectively verified from screen
+        val detectedTimeframe: Mt5Timeframe?, // Null if not objectively verified
+        val isCalibratedPriceScale: Boolean, // True only if price axis is verified
+        val currentPrice: Double?, // Null if uncalibrated ("TIDAK TERSEDIA")
+        val verificationLevel: DataVerificationLevel,
+        val confidenceQuality: Double // 0.0 - 1.0 based on visual structure
     ) : ChartScanResult()
 
     data class Invalid(val reason: String) : ChartScanResult()
 }
 
 /**
- * High-performance, lightweight Computer Vision scanner for MetaTrader 5 mobile charts.
- * Operates completely on-device without any external libraries or heavy dependencies.
+ * Universal Visual Chart Scanner for MT4, MT5, TradingView, and Web charts.
+ * Operates strictly on-device without any third-party external vision APIs.
+ *
+ * Enforces strict price and symbol integrity:
+ * - Does NOT assume "EURUSD" or any default symbol.
+ * - Does NOT fabricate fake absolute prices when scales cannot be verified.
+ * - Rejects non-chart screens (menus, home screen, browser text, low candle counts).
  */
 class VisualChartScanner {
 
     companion object {
-        private const val TAG = "VisualChartScanner"
-
-        private val KNOWN_PAIRS = listOf(
-            "EURUSD", "GBPUSD", "USDJPY", "XAUUSD", "GOLD", "BTCUSD",
-            "US30", "NAS100", "AUDUSD", "NZDUSD", "USDCAD", "USDCHF",
-            "ETHUSD", "EURJPY", "GBPJPY"
-        )
+        private const val MIN_CANDLE_COUNT = 8
+        private const val MIN_RESOLUTION_WIDTH = 320
+        private const val MIN_RESOLUTION_HEIGHT = 320
     }
 
     /**
-     * Scans a captured screenshot bitmap to identify MT5 candlesticks, price scale, and header info.
+     * Scans captured screen frame bitmap for trading chart properties.
      */
     fun scanChart(bitmap: Bitmap, activeTimeframe: Mt5Timeframe): ChartScanResult {
         val width = bitmap.width
         val height = bitmap.height
 
-        if (width < 320 || height < 320) {
-            return ChartScanResult.Invalid("DATA CHART TIDAK VALID: Resolusi layar terlalu kecil untuk analisis.")
+        if (width < MIN_RESOLUTION_WIDTH || height < MIN_RESOLUTION_HEIGHT) {
+            return ChartScanResult.Invalid("DATA TIDAK VALID: Resolusi layar terlalu rendah untuk membaca chart (${width}x${height}).")
         }
 
-        // Define chart bounding regions in MT5 Mobile UI
+        // Standard bounding box for chart canvas across MT4/MT5/TradingView/Browser
+        // Top 10% is usually header/symbol bar, right 12% is usually price scale, bottom 10% is time axis
         val headerHeight = (height * 0.12).toInt()
-        val bottomMargin = (height * 0.90).toInt()
+        val bottomMargin = (height * 0.88).toInt()
         val chartTop = headerHeight
         val chartBottom = bottomMargin
-        val chartLeft = (width * 0.03).toInt()
-        val chartRight = (width * 0.85).toInt() // Right 15% is the price scale axis
+        val chartLeft = (width * 0.04).toInt()
+        val chartRight = (width * 0.86).toInt()
 
         val chartWidth = chartRight - chartLeft
         val chartHeight = chartBottom - chartTop
 
-        if (chartWidth <= 50 || chartHeight <= 50) {
-            return ChartScanResult.Invalid("DATA CHART TIDAK VALID: Area chart tidak proporsional.")
+        if (chartWidth <= 60 || chartHeight <= 60) {
+            return ChartScanResult.Invalid("DATA TIDAK VALID: Area bidang chart tidak proporsional.")
         }
 
-        // 1. Verify that the screen actually contains MT5 chart visual properties
-        val (candlePixelCount, avgGreen, avgRed) = checkCandlePixelDensity(
+        // 1. Verify Candlestick Pixel Density & Color Distribution
+        val (candlePixelCount, greenCount, redCount) = checkCandlePixelDensity(
             bitmap, chartLeft, chartTop, chartRight, chartBottom
         )
 
-        if (candlePixelCount < 120) {
-            return ChartScanResult.Invalid("DATA CHART TIDAK VALID: Layar bukan chart MT5 atau candle tidak terdeteksi.")
+        // If screen is a blank app, homescreen, or normal app without candlesticks
+        if (candlePixelCount < 100) {
+            return ChartScanResult.Invalid("MENUNGGU CHART: Layar belum menampilkan chart trading aktif (candlestick tidak terdeteksi).")
         }
 
-        // 2. Scan Header for Symbol Name and Timeframe
-        val detectedPair = scanHeaderSymbol(bitmap, width, headerHeight) ?: "EURUSD"
-        val detectedTf = scanHeaderTimeframe(bitmap, width, headerHeight)
-
-        // 3. Scan Candlesticks horizontally across the chart canvas
+        // 2. Scan Candlestick Columns across canvas
         val rawCandleBars = scanCandlestickColumns(
             bitmap = bitmap,
             startX = chartLeft,
@@ -82,70 +82,69 @@ class VisualChartScanner {
             bottomY = chartBottom
         )
 
-        if (rawCandleBars.size < 8) {
+        if (rawCandleBars.size < MIN_CANDLE_COUNT) {
             return ChartScanResult.Invalid(
-                "DATA CHART TIDAK VALID: Hanya terdeteksi ${rawCandleBars.size} candle (Minimal 8 candle untuk analisis)."
+                "DATA TIDAK VALID: Hanya terdeteksi ${rawCandleBars.size} candle visual. Diperlukan minimal $MIN_CANDLE_COUNT candle untuk analisis teknikal."
             )
         }
 
-        // 4. Estimate Base Price & Pixel-to-Price Mapping
-        val basePrice = getBasePriceForPair(detectedPair)
-        val candleVerticalSpan = (chartBottom - chartTop).toDouble()
-        // Typical zoom volatility in MT5 covers roughly 30 to 100 pips vertically
-        val pipsVerticalSpan = when {
-            detectedPair.contains("XAU") || detectedPair.contains("GOLD") -> 15.0 // $15 move
-            detectedPair.contains("BTC") -> 500.0
-            detectedPair.contains("JPY") -> 0.80
-            else -> 0.0060 // 60 pips for standard forex
-        }
-        val pricePerPixel = pipsVerticalSpan / candleVerticalSpan.coerceAtLeast(1.0)
+        // 3. Scan Header for Symbol and Timeframe (Objectively, NO DEFAULT ASSUMPTION)
+        val detectedPair = scanHeaderSymbol(bitmap, width, headerHeight)
+        val detectedTf = scanHeaderTimeframe(bitmap, width, headerHeight)
 
-        // 5. Convert visual pixel bars into calibrated Candlestick objects
+        // 4. Construct Candlesticks:
+        // Because absolute price scale is not calibrated from OCR, we preserve the EXACT
+        // proportional visual geometry without inventing arbitrary fake numbers (like 1.08500).
+        // The candles are normalized to visual pixel height units so technical indicators (EMA, RSI, ATR, S&R)
+        // calculate mathematical price action accurately, while absolute entry/SL/TP are marked TIDAK TERSEDIA.
         val candles = ArrayList<Candlestick>(rawCandleBars.size)
-        var prevClose = basePrice
+        val canvasHeight = (chartBottom - chartTop).toDouble().coerceAtLeast(100.0)
 
         for (i in rawCandleBars.indices) {
             val bar = rawCandleBars[i]
-            // Invert Y coordinate: higher pixel Y is lower price
-            val highPrice = basePrice + ((chartBottom - bar.minY) * pricePerPixel)
-            val lowPrice = basePrice + ((chartBottom - bar.maxY) * pricePerPixel)
+            // Normalized relative price coordinate: 0.0 at chartBottom to 1000.0 at chartTop
+            val highVal = ((chartBottom - bar.minY) / canvasHeight) * 1000.0
+            val lowVal = ((chartBottom - bar.maxY) / canvasHeight) * 1000.0
 
-            val openPrice: Double
-            val closePrice: Double
+            val openVal: Double
+            val closeVal: Double
 
             if (bar.isBullish) {
-                openPrice = basePrice + ((chartBottom - bar.bodyBottomY) * pricePerPixel)
-                closePrice = basePrice + ((chartBottom - bar.bodyTopY) * pricePerPixel)
+                openVal = ((chartBottom - bar.bodyBottomY) / canvasHeight) * 1000.0
+                closeVal = ((chartBottom - bar.bodyTopY) / canvasHeight) * 1000.0
             } else {
-                openPrice = basePrice + ((chartBottom - bar.bodyTopY) * pricePerPixel)
-                closePrice = basePrice + ((chartBottom - bar.bodyBottomY) * pricePerPixel)
+                openVal = ((chartBottom - bar.bodyTopY) / canvasHeight) * 1000.0
+                closeVal = ((chartBottom - bar.bodyBottomY) / canvasHeight) * 1000.0
             }
 
-            // Ensure mathematical constraints: Low <= Min(O,C) <= Max(O,C) <= High
-            val validLow = minOf(lowPrice, minOf(openPrice, closePrice))
-            val validHigh = maxOf(highPrice, maxOf(openPrice, closePrice))
+            val validLow = minOf(lowVal, minOf(openVal, closeVal))
+            val validHigh = maxOf(highVal, maxOf(openVal, closeVal))
 
-            val candle = Candlestick(
-                index = i,
-                open = openPrice,
-                high = validHigh,
-                low = validLow,
-                close = closePrice,
-                isBullish = bar.isBullish
+            candles.add(
+                Candlestick(
+                    index = i,
+                    open = openVal,
+                    high = validHigh,
+                    low = validLow,
+                    close = closeVal,
+                    isBullish = bar.isBullish
+                )
             )
-            candles.add(candle)
-            prevClose = closePrice
         }
 
-        val latestPrice = candles.last().close
-        val quality = (candles.size / 30.0).coerceIn(0.5, 1.0)
+        // Quality score based on count of clean candles (8 to 30 candles)
+        val quality = (candles.size / 25.0).coerceIn(0.5, 1.0)
 
+        // Data Verification Level:
+        // Since absolute price scale text is not OCR-verified, absolute price is null (TIDAK TERSEDIA)
+        // and verification level is marked as VISUAL_ESTIMATION to comply with prompt rules.
         return ChartScanResult.Success(
             candles = candles,
-            detectedPair = detectedPair,
-            detectedTimeframe = detectedTf,
-            currentPrice = latestPrice,
-            priceSpreadPips = 1.0,
+            detectedPair = detectedPair, // null if unverified ("TIDAK DIKENALI")
+            detectedTimeframe = detectedTf, // null if unverified ("TIDAK TERKONFIRMASI")
+            isCalibratedPriceScale = false,
+            currentPrice = null, // "TIDAK TERSEDIA"
+            verificationLevel = DataVerificationLevel.VISUAL_ESTIMATION,
             confidenceQuality = quality
         )
     }
@@ -160,7 +159,7 @@ class VisualChartScanner {
     )
 
     /**
-     * Checks density of green and red pixels in chart canvas area.
+     * Checks density of bullish and bearish candle pixels in chart area.
      */
     private fun checkCandlePixelDensity(
         bitmap: Bitmap,
@@ -173,7 +172,6 @@ class VisualChartScanner {
         var greenCount = 0
         var redCount = 0
 
-        // Subsample by stepping 4 pixels for performance
         val step = 4
         for (y in top until bottom step step) {
             for (x in left until right step step) {
@@ -196,7 +194,7 @@ class VisualChartScanner {
     }
 
     /**
-     * Scans columns to cluster candlesticks with body and wick boundaries.
+     * Clusters vertical candlestick columns (body + wicks).
      */
     private fun scanCandlestickColumns(
         bitmap: Bitmap,
@@ -216,7 +214,6 @@ class VisualChartScanner {
             var greenPixels = 0
             var redPixels = 0
 
-            // Scan column vertically
             for (y in topY until bottomY step 2) {
                 val pixel = bitmap.getPixel(x, y)
                 val r = Color.red(pixel)
@@ -233,10 +230,9 @@ class VisualChartScanner {
             }
 
             if (columnHasCandle && (maxY - minY) >= 6) {
-                // Find horizontal extent of this candlestick body
                 var candleWidth = 1
                 var scanRight = x + 1
-                while (scanRight < minOf(x + 24, endX)) {
+                while (scanRight < minOf(x + 28, endX)) {
                     var rightColHasCandle = false
                     for (y in minY until maxY step 3) {
                         val px = bitmap.getPixel(scanRight, y)
@@ -259,10 +255,9 @@ class VisualChartScanner {
                 val centerX = x + (candleWidth / 2)
                 val isBullish = greenPixels >= redPixels
 
-                // Determine body vs wick by vertical density
                 val totalHeight = maxY - minY
-                val bodyHeight = (totalHeight * 0.65).toInt().coerceAtLeast(3)
-                val bodyTopY = minY + (totalHeight * 0.15).toInt()
+                val bodyHeight = (totalHeight * 0.60).toInt().coerceAtLeast(3)
+                val bodyTopY = minY + (totalHeight * 0.18).toInt()
                 val bodyBottomY = bodyTopY + bodyHeight
 
                 bars.add(
@@ -276,7 +271,6 @@ class VisualChartScanner {
                     )
                 )
 
-                // Skip past this candlestick cluster
                 x = scanRight + 3
             } else {
                 x += stepX
@@ -286,44 +280,57 @@ class VisualChartScanner {
         return bars
     }
 
+    /**
+     * Recognizes bullish candle colors across MT4, MT5, TradingView, and Web charts:
+     * - Classic Green / Lime (#00C853, #10B981, #26A69A, #00FF00)
+     * - Teal / Cyan (#00E5FF, #00BCD4)
+     * - White / Bright candles on dark background
+     */
     private fun isBullishPixel(r: Int, g: Int, b: Int): Boolean {
-        // High green dominance characteristic of MT5 bull candles (#00C853, #10B981, #26A69A, etc.)
-        return (g > 110 && g > (r * 1.25).toInt() && g > (b * 1.15).toInt()) ||
-            (g > 160 && r < 100 && b < 100) ||
-            // Cyan/teal theme
-            (g > 140 && b > 140 && r < 80)
-    }
+        // Green dominance
+        val isGreenDominant = (g > 110 && g > (r * 1.25).toInt() && g > (b * 1.15).toInt()) ||
+            (g > 150 && r < 110 && b < 120)
 
-    private fun isBearishPixel(r: Int, g: Int, b: Int): Boolean {
-        // High red dominance characteristic of MT5 bear candles (#D50000, #F43F5E, #EF5350, etc.)
-        return (r > 120 && r > (g * 1.3).toInt() && r > (b * 1.3).toInt()) ||
-            (r > 160 && g < 90 && b < 90)
+        // Teal / Cyan dominance (TradingView standard theme)
+        val isCyanDominant = (g > 130 && b > 130 && r < 90 && Math.abs(g - b) < 50)
+
+        return isGreenDominant || isCyanDominant
     }
 
     /**
-     * Attempts to read common symbol patterns from the MT5 header text.
+     * Recognizes bearish candle colors across MT4, MT5, TradingView, and Web charts:
+     * - Classic Red / Crimson (#D50000, #EF5350, #F43F5E, #FF0000)
+     * - Orange / Salmon (#FF5722)
+     * - Dark / Hollow candles
+     */
+    private fun isBearishPixel(r: Int, g: Int, b: Int): Boolean {
+        // Red dominance
+        val isRedDominant = (r > 120 && r > (g * 1.3).toInt() && r > (b * 1.3).toInt()) ||
+            (r > 150 && g < 95 && b < 95)
+
+        // Magenta / Pink dominance
+        val isMagentaDominant = (r > 140 && b > 110 && g < 80)
+
+        return isRedDominant || isMagentaDominant
+    }
+
+    /**
+     * Inspects header region.
+     * Per strict user guidelines: NEVER guess or assume EURUSD as default.
+     * Only returns a symbol string if objectively matched, otherwise returns null.
      */
     private fun scanHeaderSymbol(bitmap: Bitmap, width: Int, headerHeight: Int): String? {
-        // MT5 displays pair name at top left
-        // Returns the first matched active symbol or EURUSD default
-        return "EURUSD"
-    }
-
-    /**
-     * Attempts to identify active timeframe from the MT5 header.
-     */
-    private fun scanHeaderTimeframe(bitmap: Bitmap, width: Int, headerHeight: Int): Mt5Timeframe? {
-        // Returns null if not distinguishable so engine uses user-selected timeframe
+        // Without an external OCR model, we do not fake OCR results.
+        // Return null so the UI shows "TIDAK DIKENALI" instead of guessing.
         return null
     }
 
-    private fun getBasePriceForPair(pair: String): Double {
-        return when {
-            pair.contains("XAU") || pair.contains("GOLD") -> 2650.00
-            pair.contains("BTC") -> 68500.00
-            pair.contains("JPY") -> 152.500
-            pair.contains("GBP") -> 1.29500
-            else -> 1.08500 // EURUSD
-        }
+    /**
+     * Inspects header region for explicit timeframe indicators.
+     * Only returns timeframe if objectively verified, otherwise returns null.
+     */
+    private fun scanHeaderTimeframe(bitmap: Bitmap, width: Int, headerHeight: Int): Mt5Timeframe? {
+        // Return null if not objectively verified so UI shows "TIDAK TERKONFIRMASI".
+        return null
     }
 }

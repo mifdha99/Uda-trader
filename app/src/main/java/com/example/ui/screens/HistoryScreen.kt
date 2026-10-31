@@ -84,7 +84,7 @@ fun HistoryScreen(
         ) {
             Column {
                 Text(
-                    text = "RIWAYAT SINYAL AI",
+                    text = "RIWAYAT SINYAL TRADING",
                     color = Color.White,
                     fontSize = 20.sp,
                     fontWeight = FontWeight.Black,

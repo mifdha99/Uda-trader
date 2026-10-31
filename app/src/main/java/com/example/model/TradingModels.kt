@@ -1,5 +1,39 @@
 package com.example.model
 
+/**
+ * 10 Explicit Universal Engine States as specified in project requirements:
+ * 1. MENUNGGU CHART: Waiting for trading chart on screen
+ * 2. MEMBACA CHART: Capturing and reading screen pixels
+ * 3. MEMVALIDASI DATA: Validating candlestick structure and visual layout
+ * 4. MENGANALISIS: Computing indicators, momentum, and confluence
+ * 5. BUY: High-probability Bullish confluence (>= 70%)
+ * 6. SELL: High-probability Bearish confluence (>= 70%)
+ * 7. WAIT: No conclusive setup, sideways, or overbought/oversold
+ * 8. DATA TIDAK VALID: Screen is not a chart, resolution too low, or corrupted
+ * 9. LIVE SCREEN TERPUTUS: MediaProjection disconnected or permission revoked
+ * 10. DATA KEDALUWARSA: Data older than threshold (>15s without fresh frames)
+ */
+enum class EngineState(val displayName: String) {
+    WAITING_CHART("MENUNGGU CHART"),
+    READING_CHART("MEMBACA CHART"),
+    VALIDATING_DATA("MEMVALIDASI DATA"),
+    ANALYZING("MENGANALISIS"),
+    BUY("BUY NOW"),
+    SELL("SELL NOW"),
+    WAIT("WAIT"),
+    INVALID_DATA("DATA TIDAK VALID"),
+    STREAM_DISCONNECTED("LIVE SCREEN TERPUTUS"),
+    DATA_EXPIRED("DATA KEDALUWARSA");
+
+    fun isActionableSignal(): Boolean = this == BUY || this == SELL
+}
+
+enum class DataVerificationLevel(val label: String) {
+    VERIFIED("TERVERIFIKASI"),
+    VISUAL_ESTIMATION("ESTIMASI VISUAL"),
+    INVALID("TIDAK VALID")
+}
+
 enum class SignalType {
     BUY,
     SELL,
@@ -33,7 +67,7 @@ enum class ConfirmationType {
 }
 
 /**
- * Standard MT5 Timeframes
+ * Standard 9 MT5 Timeframes
  */
 enum class Mt5Timeframe(val code: String, val displayName: String, val seconds: Long) {
     M1("M1", "1 Menit", 60),
@@ -67,18 +101,23 @@ data class TechnicalMetrics(
 
 data class TradingSignal(
     val id: Long = 0,
-    val signal: SignalType,
-    val pair: String,
-    val timeframe: String,
-    val entry: Double?,
-    val stopLoss: Double?,
-    val takeProfit: Double?,
-    val riskReward: String?,
-    val confidence: Double?, // 0.0 - 100.0%
-    val trend: String,
-    val confirmation: ConfirmationType,
-    val reason: String,
-    val timestamp: String,
+    val state: EngineState = EngineState.WAIT,
+    val signal: SignalType = SignalType.WAIT,
+    val pair: String = "TIDAK DIKENALI",
+    val timeframe: String = "M5",
+    val detectedTimeframe: String? = null,
+    val isTimeframeMismatch: Boolean = false,
+    val verificationLevel: DataVerificationLevel = DataVerificationLevel.VISUAL_ESTIMATION,
+    val entry: Double? = null,
+    val stopLoss: Double? = null,
+    val takeProfit: Double? = null,
+    val riskReward: String? = "1:2",
+    val confidence: Double? = 0.0, // 0.0 - 100.0%
+    val trend: String = "SIDEWAYS",
+    val confirmation: ConfirmationType = ConfirmationType.UNCONFIRMED,
+    val reason: String = "",
+    val timestamp: String = "",
+    val timestampMillis: Long = System.currentTimeMillis(),
     val metrics: TechnicalMetrics = TechnicalMetrics()
 ) {
     fun displaySignalText(): String {
@@ -91,6 +130,53 @@ data class TradingSignal(
 
     fun formattedConfidence(): String {
         return confidence?.let { String.format("%.0f%%", it) } ?: "0%"
+    }
+
+    fun formattedSymbol(): String {
+        return if (pair.isBlank() || pair.equals("MT5", ignoreCase = true) || pair.equals("EURUSD", ignoreCase = true) && verificationLevel != DataVerificationLevel.VERIFIED) {
+            "TIDAK DIKENALI"
+        } else {
+            pair
+        }
+    }
+
+    fun formattedEntry(): String {
+        return entry?.let { String.format(java.util.Locale.US, "%.5f", it) } ?: "TIDAK TERSEDIA"
+    }
+
+    fun formattedStopLoss(): String {
+        return stopLoss?.let { String.format(java.util.Locale.US, "%.5f", it) } ?: "TIDAK TERSEDIA"
+    }
+
+    fun formattedTakeProfit(): String {
+        return takeProfit?.let { String.format(java.util.Locale.US, "%.5f", it) } ?: "TIDAK TERSEDIA"
+    }
+
+    fun formattedTimeframeStatus(): String {
+        return when {
+            isTimeframeMismatch -> "TIDAK TERKONFIRMASI (Beda: ${detectedTimeframe ?: "?"})"
+            detectedTimeframe != null -> "TERKONFIRMASI ($detectedTimeframe)"
+            else -> "TIDAK TERKONFIRMASI"
+        }
+    }
+
+    /**
+     * Formats signal copy text strictly adhering to Section 10 rules.
+     */
+    fun formattedCopyText(): String {
+        return """
+            [UDA AI TRADER]
+            Sinyal: ${displaySignalText()}
+            Simbol: ${formattedSymbol()}
+            Timeframe: $timeframe (${formattedTimeframeStatus()})
+            Entry: ${formattedEntry()}
+            SL: ${formattedStopLoss()}
+            TP: ${formattedTakeProfit()}
+            Risk/Reward: ${riskReward ?: "1:2"}
+            Confidence: ${formattedConfidence()}
+            Status: ${state.displayName}
+            Waktu: $timestamp
+        """.trimIndent()
     }
 }
 

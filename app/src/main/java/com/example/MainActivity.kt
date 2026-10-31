@@ -156,7 +156,9 @@ fun MainAppContainer(
     var showOverlayPermissionDialog by remember { mutableStateOf(false) }
 
     val currentSignal by viewModel.currentSignal.collectAsState()
+    val engineState by viewModel.engineState.collectAsState()
     val isCapturing by viewModel.isCapturing.collectAsState()
+    val isPaused by viewModel.isPaused.collectAsState()
     val isAnalyzing by viewModel.isAnalyzing.collectAsState()
     val statusMessage by viewModel.statusMessage.collectAsState()
     val isFloatingOverlayVisible by viewModel.isFloatingOverlayVisible.collectAsState()
@@ -211,7 +213,9 @@ fun MainAppContainer(
             TraderNavTab.COCKPIT -> {
                 CockpitScreen(
                     currentSignal = currentSignal,
+                    engineState = engineState,
                     isCapturing = isCapturing,
+                    isPaused = isPaused,
                     isAnalyzing = isAnalyzing,
                     statusMessage = statusMessage,
                     isFloatingOverlayVisible = isFloatingOverlayVisible,
@@ -219,6 +223,8 @@ fun MainAppContainer(
                     selectedInterval = settings.intervalSeconds,
                     onTimeframeSelected = { viewModel.updateTimeframe(it) },
                     onStartCapture = onRequestStartCapture,
+                    onPauseCapture = { viewModel.pauseScreenCapture() },
+                    onResumeCapture = { viewModel.resumeScreenCapture() },
                     onStopCapture = { viewModel.stopScreenCapture() },
                     onToggleFloatingOverlay = onRequestFloatingOverlay,
                     onIntervalSelected = { viewModel.updateInterval(it) },

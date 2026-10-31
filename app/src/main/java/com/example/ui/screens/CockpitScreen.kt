@@ -4,7 +4,6 @@ import android.content.ClipData
 import android.content.ClipboardManager
 import android.content.Context
 import android.widget.Toast
-import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
@@ -31,10 +30,12 @@ import androidx.compose.material.icons.filled.CameraAlt
 import androidx.compose.material.icons.filled.ContentCopy
 import androidx.compose.material.icons.filled.Info
 import androidx.compose.material.icons.filled.Layers
+import androidx.compose.material.icons.filled.Pause
 import androidx.compose.material.icons.filled.PlayArrow
 import androidx.compose.material.icons.filled.Refresh
 import androidx.compose.material.icons.filled.ShowChart
 import androidx.compose.material.icons.filled.Stop
+import androidx.compose.material.icons.filled.Warning
 import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.Card
@@ -56,6 +57,8 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.example.model.ConfirmationType
+import com.example.model.DataVerificationLevel
+import com.example.model.EngineState
 import com.example.model.Mt5Timeframe
 import com.example.model.SignalType
 import com.example.model.TradingSignal
@@ -78,7 +81,9 @@ import java.util.Locale
 @Composable
 fun CockpitScreen(
     currentSignal: TradingSignal?,
+    engineState: EngineState,
     isCapturing: Boolean,
+    isPaused: Boolean,
     isAnalyzing: Boolean,
     statusMessage: String,
     isFloatingOverlayVisible: Boolean,
@@ -86,6 +91,8 @@ fun CockpitScreen(
     selectedInterval: Int,
     onTimeframeSelected: (Mt5Timeframe) -> Unit,
     onStartCapture: () -> Unit,
+    onPauseCapture: () -> Unit,
+    onResumeCapture: () -> Unit,
     onStopCapture: () -> Unit,
     onToggleFloatingOverlay: () -> Unit,
     onIntervalSelected: (Int) -> Unit,
@@ -118,7 +125,7 @@ fun CockpitScreen(
                     letterSpacing = 1.sp
                 )
                 Text(
-                    text = "Universal Signal Engine (On-Device MT5)",
+                    text = "Universal Signal Engine (On-Device MT4/MT5/TV)",
                     color = CyanAccent,
                     fontSize = 12.sp,
                     fontWeight = FontWeight.Medium
@@ -143,7 +150,10 @@ fun CockpitScreen(
             }
         }
 
-        // Section 4: TIMEFRAME SELECTOR (MT5 Style)
+        // 10-State Engine Banner
+        EngineStateBanner(engineState = engineState, isPaused = isPaused)
+
+        // Timeframe Selector (9 Timeframes)
         Card(
             modifier = Modifier.fillMaxWidth(),
             colors = CardDefaults.cardColors(containerColor = DarkSurface),
@@ -225,8 +235,8 @@ fun CockpitScreen(
                     StatusPill(
                         label = "Screen Capture",
                         active = isCapturing,
-                        activeText = "MONITORING 1s",
-                        inactiveText = "STOPPED",
+                        activeText = if (isPaused) "DIJEDA (JEDA)" else "AKTIF (${selectedInterval}s)",
+                        inactiveText = "BERHENTI",
                         icon = Icons.Default.CameraAlt
                     )
 
@@ -234,7 +244,7 @@ fun CockpitScreen(
                         label = "Universal Engine",
                         active = isAnalyzing,
                         activeText = "SCANNING",
-                        inactiveText = "READY",
+                        inactiveText = engineState.displayName,
                         icon = Icons.Default.ShowChart
                     )
 
@@ -267,7 +277,7 @@ fun CockpitScreen(
                         Box(
                             modifier = Modifier
                                 .size(8.dp)
-                                .background(if (isCapturing) NeonGreen else Slate400, CircleShape)
+                                .background(if (isCapturing && !isPaused) NeonGreen else Slate400, CircleShape)
                         )
                         Spacer(modifier = Modifier.width(8.dp))
                     }
@@ -283,9 +293,9 @@ fun CockpitScreen(
         }
 
         // Main Live Signal Card
-        LiveSignalHeroCard(signal = currentSignal, isAnalyzing = isAnalyzing)
+        LiveSignalHeroCard(signal = currentSignal, engineState = engineState)
 
-        // Primary Control Actions
+        // Primary Control Actions: MULAI, JEDA/LANJUT, BERHENTI
         Card(
             modifier = Modifier.fillMaxWidth(),
             colors = CardDefaults.cardColors(containerColor = DarkSurface),
@@ -297,18 +307,19 @@ fun CockpitScreen(
                 verticalArrangement = Arrangement.spacedBy(14.dp)
             ) {
                 Text(
-                    text = "KONTROL PEMANTAUAN MT5",
+                    text = "KONTROL PEMANTAUAN LAYAR (LIVE SCREEN)",
                     color = Slate400,
                     fontSize = 11.sp,
                     fontWeight = FontWeight.Bold,
                     letterSpacing = 0.8.sp
                 )
 
-                // Start / Stop Buttons
+                // 3 Action Buttons: MULAI, JEDA/LANJUT, BERHENTI
                 Row(
                     modifier = Modifier.fillMaxWidth(),
-                    horizontalArrangement = Arrangement.spacedBy(10.dp)
+                    horizontalArrangement = Arrangement.spacedBy(8.dp)
                 ) {
+                    // MULAI
                     Button(
                         onClick = onStartCapture,
                         enabled = !isCapturing,
@@ -324,11 +335,39 @@ fun CockpitScreen(
                             .height(48.dp)
                             .testTag("start_analysis_button")
                     ) {
-                        Icon(Icons.Default.PlayArrow, contentDescription = null, modifier = Modifier.size(20.dp))
-                        Spacer(modifier = Modifier.width(6.dp))
-                        Text("MULAI PEMANTAUAN", fontWeight = FontWeight.Bold, fontSize = 12.sp)
+                        Icon(Icons.Default.PlayArrow, contentDescription = null, modifier = Modifier.size(18.dp))
+                        Spacer(modifier = Modifier.width(4.dp))
+                        Text("MULAI", fontWeight = FontWeight.Bold, fontSize = 12.sp)
                     }
 
+                    // JEDA / LANJUT
+                    Button(
+                        onClick = {
+                            if (isPaused) onResumeCapture() else onPauseCapture()
+                        },
+                        enabled = isCapturing,
+                        colors = ButtonDefaults.buttonColors(
+                            containerColor = if (isPaused) CyanAccent else NeonAmber,
+                            contentColor = Color.Black,
+                            disabledContainerColor = Slate800,
+                            disabledContentColor = Slate400
+                        ),
+                        shape = RoundedCornerShape(10.dp),
+                        modifier = Modifier
+                            .weight(1f)
+                            .height(48.dp)
+                            .testTag("pause_resume_button")
+                    ) {
+                        Icon(
+                            if (isPaused) Icons.Default.PlayArrow else Icons.Default.Pause,
+                            contentDescription = null,
+                            modifier = Modifier.size(18.dp)
+                        )
+                        Spacer(modifier = Modifier.width(4.dp))
+                        Text(if (isPaused) "LANJUT" else "JEDA", fontWeight = FontWeight.Bold, fontSize = 12.sp)
+                    }
+
+                    // BERHENTI
                     Button(
                         onClick = onStopCapture,
                         enabled = isCapturing,
@@ -344,9 +383,9 @@ fun CockpitScreen(
                             .height(48.dp)
                             .testTag("stop_analysis_button")
                     ) {
-                        Icon(Icons.Default.Stop, contentDescription = null, modifier = Modifier.size(20.dp))
-                        Spacer(modifier = Modifier.width(6.dp))
-                        Text("BERHENTI", fontWeight = FontWeight.Bold, fontSize = 12.sp)
+                        Icon(Icons.Default.Stop, contentDescription = null, modifier = Modifier.size(18.dp))
+                        Spacer(modifier = Modifier.width(4.dp))
+                        Text("BERHENTI", fontWeight = FontWeight.Bold, fontSize = 11.sp)
                     }
                 }
 
@@ -366,13 +405,13 @@ fun CockpitScreen(
                     Icon(Icons.Default.Layers, contentDescription = null, modifier = Modifier.size(18.dp))
                     Spacer(modifier = Modifier.width(8.dp))
                     Text(
-                        text = if (isFloatingOverlayVisible) "SEMBUNYIKAN FLOATING WINDOW" else "BUKA FLOATING WINDOW DI ATAS MT5",
+                        text = if (isFloatingOverlayVisible) "SEMBUNYIKAN FLOATING WINDOW" else "BUKA FLOATING WINDOW DI ATAS CHART",
                         fontWeight = FontWeight.Bold,
                         fontSize = 13.sp
                     )
                 }
 
-                // Target Interval Selection
+                // Interval Selection
                 Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
                     Text(
                         text = "Frekuensi Pemindaian Layar:",
@@ -411,21 +450,48 @@ fun CockpitScreen(
                         }
                     }
                 }
+            }
+        }
 
-                // Test Sample Frame Action
+        // Distinct DEMO / SIMULATION TEST Section
+        Card(
+            modifier = Modifier.fillMaxWidth(),
+            colors = CardDefaults.cardColors(containerColor = Slate900),
+            shape = RoundedCornerShape(14.dp),
+            border = androidx.compose.foundation.BorderStroke(1.dp, DarkBorder)
+        ) {
+            Column(
+                modifier = Modifier.padding(14.dp),
+                verticalArrangement = Arrangement.spacedBy(8.dp)
+            ) {
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    Icon(Icons.Default.Refresh, contentDescription = null, tint = CyanAccent, modifier = Modifier.size(16.dp))
+                    Spacer(modifier = Modifier.width(6.dp))
+                    Text(
+                        text = "MODE DEMO / SIMULASI (BUKAN LIVE MT5)",
+                        color = CyanAccent,
+                        fontSize = 11.sp,
+                        fontWeight = FontWeight.Black,
+                        letterSpacing = 0.8.sp
+                    )
+                }
+                Text(
+                    text = "Gunakan mode ini untuk menguji algoritma Universal Signal Engine secara lokal dengan dataset chart sintetis tanpa menghubungkan screen capture.",
+                    color = Slate400,
+                    fontSize = 11.sp,
+                    lineHeight = 16.sp
+                )
                 OutlinedButton(
                     onClick = onTestSampleFrame,
-                    shape = RoundedCornerShape(10.dp),
+                    shape = RoundedCornerShape(8.dp),
                     modifier = Modifier
                         .fillMaxWidth()
-                        .height(42.dp)
+                        .height(38.dp)
                         .testTag("test_sample_frame_button"),
-                    border = androidx.compose.foundation.BorderStroke(1.dp, DarkBorder)
+                    border = androidx.compose.foundation.BorderStroke(1.dp, CyanAccent)
                 ) {
-                    Icon(Icons.Default.Refresh, contentDescription = null, tint = CyanAccent, modifier = Modifier.size(16.dp))
-                    Spacer(modifier = Modifier.width(8.dp))
                     Text(
-                        text = "Uji Coba Universal Engine dengan Chart Sampel MT5",
+                        text = "Jalankan Simulasi Chart Uji Coba",
                         color = CyanAccent,
                         fontSize = 12.sp,
                         fontWeight = FontWeight.SemiBold
@@ -437,7 +503,63 @@ fun CockpitScreen(
 }
 
 @Composable
-fun LiveSignalHeroCard(signal: TradingSignal?, isAnalyzing: Boolean) {
+fun EngineStateBanner(engineState: EngineState, isPaused: Boolean) {
+    val (bgColor, borderColor, textColor, iconVector) = when (engineState) {
+        EngineState.BUY -> Quad(Color(0x3310B981), NeonGreen, NeonGreen, Icons.Default.ShowChart)
+        EngineState.SELL -> Quad(Color(0x33F43F5E), NeonRed, NeonRed, Icons.Default.ShowChart)
+        EngineState.WAIT -> Quad(Color(0x33F59E0B), NeonAmber, NeonAmber, Icons.Default.Info)
+        EngineState.WAITING_CHART -> Quad(Color(0x3364748B), Color(0xFF94A3B8), Color(0xFFCBD5E1), Icons.Default.CameraAlt)
+        EngineState.READING_CHART -> Quad(Color(0x330284C7), Color(0xFF38BDF8), Color(0xFF38BDF8), Icons.Default.CameraAlt)
+        EngineState.VALIDATING_DATA -> Quad(Color(0x338B5CF6), Color(0xFFA78BFA), Color(0xFFA78BFA), Icons.Default.ShowChart)
+        EngineState.ANALYZING -> Quad(Color(0x3306B6D4), CyanAccent, CyanAccent, Icons.Default.ShowChart)
+        EngineState.INVALID_DATA -> Quad(Color(0x33EF4444), NeonRed, NeonRed, Icons.Default.Warning)
+        EngineState.STREAM_DISCONNECTED -> Quad(Color(0x33EF4444), NeonRed, NeonRed, Icons.Default.Warning)
+        EngineState.DATA_EXPIRED -> Quad(Color(0x33F97316), Color(0xFFFB923C), Color(0xFFFB923C), Icons.Default.Warning)
+    }
+
+    Row(
+        modifier = Modifier
+            .fillMaxWidth()
+            .clip(RoundedCornerShape(10.dp))
+            .background(bgColor)
+            .border(1.dp, borderColor, RoundedCornerShape(10.dp))
+            .padding(horizontal = 14.dp, vertical = 10.dp),
+        verticalAlignment = Alignment.CenterVertically,
+        horizontalArrangement = Arrangement.SpaceBetween
+    ) {
+        Row(
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.spacedBy(8.dp)
+        ) {
+            Icon(
+                imageVector = iconVector,
+                contentDescription = null,
+                tint = textColor,
+                modifier = Modifier.size(18.dp)
+            )
+            Column {
+                Text(
+                    text = "STATUS ENGINE: ${engineState.displayName}",
+                    color = textColor,
+                    fontWeight = FontWeight.Black,
+                    fontSize = 12.sp,
+                    letterSpacing = 0.5.sp
+                )
+                if (isPaused) {
+                    Text(
+                        text = "• Sesi pemantauan sedang dijeda",
+                        color = NeonAmber,
+                        fontSize = 10.sp,
+                        fontWeight = FontWeight.Medium
+                    )
+                }
+            }
+        }
+    }
+}
+
+@Composable
+fun LiveSignalHeroCard(signal: TradingSignal?, engineState: EngineState) {
     val context = LocalContext.current
     val signalType = signal?.signal ?: SignalType.WAIT
     val (signalColor, badgeBg, signalText) = when (signalType) {
@@ -467,7 +589,7 @@ fun LiveSignalHeroCard(signal: TradingSignal?, isAnalyzing: Boolean) {
             ) {
                 Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                     Text(
-                        text = signal?.pair ?: "MT5 VISUAL",
+                        text = signal?.formattedSymbol() ?: "TIDAK DIKENALI",
                         color = Color.White,
                         fontSize = 18.sp,
                         fontWeight = FontWeight.Black,
@@ -577,17 +699,17 @@ fun LiveSignalHeroCard(signal: TradingSignal?, isAnalyzing: Boolean) {
             ) {
                 PriceMetricColumn(
                     label = "ENTRY",
-                    value = signal?.entry?.let { String.format(Locale.US, "%.5f", it) } ?: "---",
+                    value = signal?.formattedEntry() ?: "TIDAK TERSEDIA",
                     valueColor = CyanAccent
                 )
                 PriceMetricColumn(
                     label = "STOP LOSS",
-                    value = signal?.stopLoss?.let { String.format(Locale.US, "%.5f", it) } ?: "---",
+                    value = signal?.formattedStopLoss() ?: "TIDAK TERSEDIA",
                     valueColor = NeonRed
                 )
                 PriceMetricColumn(
                     label = "TAKE PROFIT",
-                    value = signal?.takeProfit?.let { String.format(Locale.US, "%.5f", it) } ?: "---",
+                    value = signal?.formattedTakeProfit() ?: "TIDAK TERSEDIA",
                     valueColor = NeonGreen
                 )
                 PriceMetricColumn(
@@ -609,10 +731,10 @@ fun LiveSignalHeroCard(signal: TradingSignal?, isAnalyzing: Boolean) {
                         horizontalArrangement = Arrangement.SpaceBetween
                     ) {
                         m.fastEma?.let {
-                            IndicatorMiniBadge(label = "EMA 9", value = String.format(Locale.US, "%.5f", it))
+                            IndicatorMiniBadge(label = "EMA 9", value = String.format(Locale.US, "%.1f", it))
                         }
                         m.slowEma?.let {
-                            IndicatorMiniBadge(label = "EMA 21", value = String.format(Locale.US, "%.5f", it))
+                            IndicatorMiniBadge(label = "EMA 21", value = String.format(Locale.US, "%.1f", it))
                         }
                         m.rsi?.let {
                             val rsiColor = when {
@@ -623,13 +745,13 @@ fun LiveSignalHeroCard(signal: TradingSignal?, isAnalyzing: Boolean) {
                             IndicatorMiniBadge(label = "RSI 14", value = String.format(Locale.US, "%.1f", it), valueColor = rsiColor)
                         }
                         m.atr?.let {
-                            IndicatorMiniBadge(label = "ATR", value = String.format(Locale.US, "%.5f", it))
+                            IndicatorMiniBadge(label = "ATR", value = String.format(Locale.US, "%.1f", it))
                         }
                     }
                 }
             }
 
-            // Detailed Technical Reason & COPY Button
+            // Detailed Technical Reason & Section 10 COPY Button
             Column(
                 modifier = Modifier
                     .fillMaxWidth()
@@ -663,13 +785,9 @@ fun LiveSignalHeroCard(signal: TradingSignal?, isAnalyzing: Boolean) {
                     // COPY Button
                     Button(
                         onClick = {
-                            val entryStr = signal?.entry?.let { String.format(Locale.US, "%.5f", it) } ?: "---"
-                            val slStr = signal?.stopLoss?.let { String.format(Locale.US, "%.5f", it) } ?: "---"
-                            val tpStr = signal?.takeProfit?.let { String.format(Locale.US, "%.5f", it) } ?: "---"
-                            val clipText = "UDA AI TRADER [$signalText]\nPair: ${signal?.pair ?: "MT5"} | TF: ${signal?.timeframe ?: "M5"}\nEntry: $entryStr\nSL: $slStr\nTP: $tpStr\nRisk Reward: ${signal?.riskReward ?: "1:2"}\nConfidence: ${signal?.formattedConfidence() ?: "0%"}"
-
+                            val copyContent = signal?.formattedCopyText() ?: "[UDA AI TRADER]\nSinyal: WAIT\nStatus: MENUNGGU CHART"
                             val clipboard = context.getSystemService(Context.CLIPBOARD_SERVICE) as ClipboardManager
-                            clipboard.setPrimaryClip(ClipData.newPlainText("UdaTraderSignal", clipText))
+                            clipboard.setPrimaryClip(ClipData.newPlainText("UdaTraderSignal", copyContent))
                             Toast.makeText(context, "Sinyal disalin ke Clipboard!", Toast.LENGTH_SHORT).show()
                         },
                         colors = ButtonDefaults.buttonColors(containerColor = CyanAccent),
@@ -691,7 +809,7 @@ fun LiveSignalHeroCard(signal: TradingSignal?, isAnalyzing: Boolean) {
                 }
 
                 Text(
-                    text = signal?.reason ?: "Universal Engine siap. Tekan 'MULAI PEMANTAUAN' dan buka MetaTrader 5.",
+                    text = signal?.reason ?: "Universal Engine siap. Tekan 'MULAI' dan buka chart MetaTrader atau TradingView.",
                     color = Color.White,
                     fontSize = 12.sp,
                     lineHeight = 18.sp
@@ -699,7 +817,7 @@ fun LiveSignalHeroCard(signal: TradingSignal?, isAnalyzing: Boolean) {
 
                 if (!signal?.timestamp.isNullOrBlank()) {
                     Text(
-                        text = "Waktu Pembaruan: ${signal?.timestamp}",
+                        text = "Waktu Pembaruan: ${signal?.timestamp} • ${signal?.verificationLevel?.label}",
                         color = Slate400,
                         fontSize = 10.sp,
                         fontFamily = FontFamily.Monospace
@@ -768,5 +886,7 @@ private fun StatusPill(
         )
     }
 }
+
+private data class Quad<A, B, C, D>(val first: A, val second: B, val third: C, val fourth: D)
 
 private val Slate700 = Color(0xFF334155)

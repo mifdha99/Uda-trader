@@ -31,12 +31,19 @@ import com.example.R
 import com.example.data.pref.AppSettings
 import com.example.data.repository.TradingRepository
 
+/**
+ * Foreground Service for continuous MediaProjection screen capture.
+ * Supports MULAI (Start), JEDA (Pause), LANJUT (Resume), and BERHENTI (Stop).
+ */
 class ScreenCaptureService : Service() {
 
     companion object {
         private const val TAG = "ScreenCaptureService"
         const val ACTION_START = "com.example.action.START_CAPTURE"
+        const val ACTION_PAUSE = "com.example.action.PAUSE_CAPTURE"
+        const val ACTION_RESUME = "com.example.action.RESUME_CAPTURE"
         const val ACTION_STOP = "com.example.action.STOP_CAPTURE"
+
         const val EXTRA_RESULT_CODE = "extra_result_code"
         const val EXTRA_RESULT_DATA = "extra_result_data"
 
@@ -48,7 +55,9 @@ class ScreenCaptureService : Service() {
     private var virtualDisplay: VirtualDisplay? = null
     private var imageReader: ImageReader? = null
     private var handler: Handler? = null
+
     private var isCapturing = false
+    private var isPaused = false
 
     private lateinit var appSettings: AppSettings
     private lateinit var repository: TradingRepository
@@ -56,8 +65,10 @@ class ScreenCaptureService : Service() {
     private val captureRunnable = object : Runnable {
         override fun run() {
             if (!isCapturing) return
-            captureLatestFrame()
-            val interval = appSettings.getSettings().intervalSeconds.coerceIn(1, 10) * 1000L
+            if (!isPaused) {
+                captureLatestFrame()
+            }
+            val interval = appSettings.getSettings().intervalSeconds.coerceIn(1, 5) * 1000L
             handler?.postDelayed(this, interval)
         }
     }
@@ -71,42 +82,74 @@ class ScreenCaptureService : Service() {
     }
 
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
-        val action = intent?.action
-        if (action == ACTION_STOP) {
-            stopCapture()
-            stopSelf()
-            return START_NOT_STICKY
-        }
-
-        if (action == ACTION_START) {
-            val resultCode = intent.getIntExtra(EXTRA_RESULT_CODE, 0)
-            val resultData = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
-                intent.getParcelableExtra(EXTRA_RESULT_DATA, Intent::class.java)
-            } else {
-                @Suppress("DEPRECATION")
-                intent.getParcelableExtra(EXTRA_RESULT_DATA)
-            }
-
-            if (resultCode != 0 && resultData != null) {
-                startForegroundWithNotification()
-                startProjection(resultCode, resultData)
-            } else {
-                Log.e(TAG, "Invalid MediaProjection intent data")
+        when (intent?.action) {
+            ACTION_STOP -> {
+                stopCapture()
                 stopSelf()
+                return START_NOT_STICKY
+            }
+            ACTION_PAUSE -> {
+                pauseCapture()
+                return START_STICKY
+            }
+            ACTION_RESUME -> {
+                resumeCapture()
+                return START_STICKY
+            }
+            ACTION_START -> {
+                val resultCode = intent.getIntExtra(EXTRA_RESULT_CODE, 0)
+                val resultData = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
+                    intent.getParcelableExtra(EXTRA_RESULT_DATA, Intent::class.java)
+                } else {
+                    @Suppress("DEPRECATION")
+                    intent.getParcelableExtra(EXTRA_RESULT_DATA)
+                }
+
+                if (resultCode != 0 && resultData != null) {
+                    startForegroundWithNotification(isPaused = false)
+                    startProjection(resultCode, resultData)
+                } else {
+                    Log.e(TAG, "Invalid MediaProjection intent data")
+                    stopSelf()
+                }
             }
         }
 
         return START_STICKY
     }
 
-    private fun startForegroundWithNotification() {
+    private fun pauseCapture() {
+        isPaused = true
+        repository.setPaused(true)
+        updateNotification(isPaused = true)
+        Log.d(TAG, "Screen capture paused (JEDA)")
+    }
+
+    private fun resumeCapture() {
+        isPaused = false
+        repository.setPaused(false)
+        updateNotification(isPaused = false)
+        Log.d(TAG, "Screen capture resumed (LANJUT)")
+    }
+
+    private fun buildNotification(isPaused: Boolean): Notification {
         val stopIntent = Intent(this, ScreenCaptureService::class.java).apply {
-            this.action = ACTION_STOP
+            action = ACTION_STOP
         }
         val stopPendingIntent = PendingIntent.getService(
             this,
-            0,
+            1,
             stopIntent,
+            PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
+        )
+
+        val pauseResumeIntent = Intent(this, ScreenCaptureService::class.java).apply {
+            action = if (isPaused) ACTION_RESUME else ACTION_PAUSE
+        }
+        val pauseResumePendingIntent = PendingIntent.getService(
+            this,
+            2,
+            pauseResumeIntent,
             PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
         )
 
@@ -118,26 +161,43 @@ class ScreenCaptureService : Service() {
             PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
         )
 
-        val notification: Notification = NotificationCompat.Builder(this, CHANNEL_ID)
-            .setContentTitle("UDA AI TRADER Aktif")
-            .setContentText("Memantau chart MT5 & menganalisis sinyal real-time")
+        val statusText = if (isPaused) {
+            "Pemantauan Dijeda (JEDA). Tekan Lanjut untuk memantau."
+        } else {
+            "Memantau chart visual trading secara real-time"
+        }
+
+        val toggleLabel = if (isPaused) "LANJUT" else "JEDA"
+
+        return NotificationCompat.Builder(this, CHANNEL_ID)
+            .setContentTitle("UDA AI TRADER")
+            .setContentText(statusText)
             .setSmallIcon(R.mipmap.ic_launcher)
             .setOngoing(true)
             .setContentIntent(appPendingIntent)
+            .addAction(R.drawable.ic_launcher_foreground, toggleLabel, pauseResumePendingIntent)
             .addAction(R.drawable.ic_launcher_foreground, "BERHENTI", stopPendingIntent)
             .setPriority(NotificationCompat.PRIORITY_HIGH)
             .build()
+    }
 
+    private fun startForegroundWithNotification(isPaused: Boolean) {
+        val notification = buildNotification(isPaused)
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
-            val type = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.UPSIDE_DOWN_CAKE) {
+            ServiceCompat.startForeground(
+                this,
+                NOTIFICATION_ID,
+                notification,
                 ServiceInfo.FOREGROUND_SERVICE_TYPE_MEDIA_PROJECTION
-            } else {
-                ServiceInfo.FOREGROUND_SERVICE_TYPE_MEDIA_PROJECTION
-            }
-            ServiceCompat.startForeground(this, NOTIFICATION_ID, notification, type)
+            )
         } else {
             startForeground(NOTIFICATION_ID, notification)
         }
+    }
+
+    private fun updateNotification(isPaused: Boolean) {
+        val manager = getSystemService(NotificationManager::class.java)
+        manager.notify(NOTIFICATION_ID, buildNotification(isPaused))
     }
 
     @SuppressLint("WrongConstant")
@@ -148,6 +208,7 @@ class ScreenCaptureService : Service() {
 
             if (mediaProjection == null) {
                 Log.e(TAG, "Failed to obtain MediaProjection")
+                repository.notifyStreamDisconnected()
                 stopSelf()
                 return
             }
@@ -157,19 +218,17 @@ class ScreenCaptureService : Service() {
             @Suppress("DEPRECATION")
             windowManager.defaultDisplay.getRealMetrics(metrics)
 
-            // Scaled dimensions for optimal transmission & latency
             var screenWidth = metrics.widthPixels
             var screenHeight = metrics.heightPixels
             val density = metrics.densityDpi
 
-            // Constrain max resolution for chart analysis efficiency (max width ~720-1080)
+            // Scale resolution to max 1080 width for CPU/RAM performance
             if (screenWidth > 1080) {
                 val scale = 1080f / screenWidth.toFloat()
                 screenWidth = 1080
                 screenHeight = (screenHeight * scale).toInt()
             }
 
-            // Must be multiple of 2
             if (screenWidth % 2 != 0) screenWidth -= 1
             if (screenHeight % 2 != 0) screenHeight -= 1
 
@@ -187,21 +246,25 @@ class ScreenCaptureService : Service() {
             )
 
             isCapturing = true
+            isPaused = false
             repository.setCapturing(true)
+            repository.setPaused(false)
 
-            // Register callback on projection stop
             mediaProjection?.registerCallback(object : MediaProjection.Callback() {
                 override fun onStop() {
                     super.onStop()
+                    Log.w(TAG, "MediaProjection stopped by system")
+                    repository.notifyStreamDisconnected()
                     stopCapture()
                 }
             }, handler)
 
-            // Start cyclic capture loop
+            // Start capture cycle
             handler?.postDelayed(captureRunnable, 1000)
-            Log.d(TAG, "MediaProjection started successfully: ${screenWidth}x${screenHeight} @ ${density}dpi")
+            Log.d(TAG, "MediaProjection live capture started: ${screenWidth}x${screenHeight}")
         } catch (e: Exception) {
             Log.e(TAG, "Error starting projection: ${e.message}", e)
+            repository.notifyStreamDisconnected()
             stopSelf()
         }
     }
@@ -225,7 +288,6 @@ class ScreenCaptureService : Service() {
                 val bitmap = Bitmap.createBitmap(bitmapWidth, height, Bitmap.Config.ARGB_8888)
                 bitmap.copyPixelsFromBuffer(buffer)
 
-                // Crop out stride padding to get exact screen bitmap
                 val cleanBitmap = if (bitmapWidth != width) {
                     val cropped = Bitmap.createBitmap(bitmap, 0, 0, width, height)
                     bitmap.recycle()
@@ -234,7 +296,6 @@ class ScreenCaptureService : Service() {
                     bitmap
                 }
 
-                // Send to TradingRepository for AI analysis
                 repository.processCapturedFrame(cleanBitmap)
             }
         } catch (e: Exception) {
@@ -246,8 +307,10 @@ class ScreenCaptureService : Service() {
 
     private fun stopCapture() {
         isCapturing = false
+        isPaused = false
         handler?.removeCallbacks(captureRunnable)
         repository.setCapturing(false)
+        repository.setPaused(false)
 
         try {
             virtualDisplay?.release()
@@ -257,7 +320,7 @@ class ScreenCaptureService : Service() {
             mediaProjection?.stop()
             mediaProjection = null
         } catch (e: Exception) {
-            Log.e(TAG, "Error cleaning up projection: ${e.message}")
+            Log.e(TAG, "Error stopping projection: ${e.message}")
         }
     }
 
@@ -275,7 +338,7 @@ class ScreenCaptureService : Service() {
                 "UDA AI TRADER Screen Capture",
                 NotificationManager.IMPORTANCE_LOW
             ).apply {
-                description = "Foreground service notification for active MT5 chart capture"
+                description = "Foreground service notification for active trading chart monitoring"
             }
             val manager = getSystemService(NotificationManager::class.java)
             manager.createNotificationChannel(channel)
