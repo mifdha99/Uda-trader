@@ -21,18 +21,17 @@ import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.navigationBarsPadding
 import androidx.compose.foundation.layout.padding
 import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.filled.Assessment
+import androidx.compose.material.icons.filled.Analytics
 import androidx.compose.material.icons.filled.History
 import androidx.compose.material.icons.filled.Security
 import androidx.compose.material.icons.filled.Settings
-import androidx.compose.material3.AlertDialog
+import androidx.compose.material.icons.filled.TrendingUp
 import androidx.compose.material3.Icon
 import androidx.compose.material3.NavigationBar
 import androidx.compose.material3.NavigationBarItem
 import androidx.compose.material3.NavigationBarItemDefaults
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Text
-import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
@@ -40,7 +39,6 @@ import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.text.font.FontWeight
@@ -48,23 +46,22 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.core.content.ContextCompat
 import com.example.ui.screens.CockpitScreen
+import com.example.ui.screens.EngineerScreen
 import com.example.ui.screens.HistoryScreen
 import com.example.ui.screens.RiskCalculatorScreen
 import com.example.ui.screens.SettingsScreen
 import com.example.ui.theme.CyanAccent
-import com.example.ui.theme.DarkBorder
 import com.example.ui.theme.DarkSurface
 import com.example.ui.theme.MyApplicationTheme
-import com.example.ui.theme.NeonGreen
 import com.example.ui.theme.Slate400
 import com.example.ui.theme.Slate900
-import com.example.ui.theme.Slate950
 import com.example.viewmodel.TraderViewModel
 
 enum class TraderNavTab(val title: String, val icon: ImageVector) {
-    COCKPIT("Cockpit", Icons.Default.Assessment),
-    HISTORY("Riwayat", Icons.Default.History),
+    TRADING("Trading", Icons.Default.TrendingUp),
+    ENGINEER("Engineer", Icons.Default.Analytics),
     RISK("Risiko", Icons.Default.Security),
+    HISTORY("Riwayat", Icons.Default.History),
     SETTINGS("Pengaturan", Icons.Default.Settings)
 }
 
@@ -72,7 +69,6 @@ class MainActivity : ComponentActivity() {
 
     private val viewModel: TraderViewModel by viewModels()
 
-    // MediaProjection screen capture contract
     private val screenCaptureLauncher = registerForActivityResult(
         ActivityResultContracts.StartActivityForResult()
     ) { result ->
@@ -84,7 +80,6 @@ class MainActivity : ComponentActivity() {
         }
     }
 
-    // Overlay permission contract
     private val overlayPermissionLauncher = registerForActivityResult(
         ActivityResultContracts.StartActivityForResult()
     ) {
@@ -95,11 +90,9 @@ class MainActivity : ComponentActivity() {
         }
     }
 
-    // Notification permission contract for Android 13+
     private val notificationPermissionLauncher = registerForActivityResult(
         ActivityResultContracts.RequestPermission()
     ) { _ ->
-        // Continue to capture
         requestMediaProjection()
     }
 
@@ -152,19 +145,25 @@ fun MainAppContainer(
     onRequestStartCapture: () -> Unit,
     onRequestFloatingOverlay: () -> Unit
 ) {
-    var selectedTab by remember { mutableStateOf(TraderNavTab.COCKPIT) }
-    var showOverlayPermissionDialog by remember { mutableStateOf(false) }
+    var selectedTab by remember { mutableStateOf(TraderNavTab.TRADING) }
+    val context = androidx.compose.ui.platform.LocalContext.current
 
     val currentSignal by viewModel.currentSignal.collectAsState()
-    val engineState by viewModel.engineState.collectAsState()
     val isCapturing by viewModel.isCapturing.collectAsState()
-    val isPaused by viewModel.isPaused.collectAsState()
     val isAnalyzing by viewModel.isAnalyzing.collectAsState()
     val statusMessage by viewModel.statusMessage.collectAsState()
     val isFloatingOverlayVisible by viewModel.isFloatingOverlayVisible.collectAsState()
     val signalHistory by viewModel.signalHistory.collectAsState()
     val settings by viewModel.settings.collectAsState()
     val riskSettings by viewModel.riskSettings.collectAsState()
+    val connectionTestStatus by viewModel.connectionTestStatus.collectAsState()
+
+    val activeDataSource by viewModel.activeDataSource.collectAsState()
+    val olympPrice by viewModel.olympPrice.collectAsState()
+    val olympPair by viewModel.olympPair.collectAsState()
+    val olympBalance by viewModel.olympBalance.collectAsState()
+    val autoTradingState by viewModel.autoTradingState.collectAsState()
+    val technicalResult by viewModel.technicalResult.collectAsState()
 
     Scaffold(
         modifier = Modifier.fillMaxSize(),
@@ -193,7 +192,7 @@ fun MainAppContainer(
                                 text = tab.title,
                                 color = if (isSelected) CyanAccent else Slate400,
                                 fontWeight = if (isSelected) FontWeight.Bold else FontWeight.Normal,
-                                fontSize = 11.sp
+                                fontSize = 10.sp
                             )
                         },
                         colors = NavigationBarItemDefaults.colors(
@@ -210,32 +209,38 @@ fun MainAppContainer(
         }
     ) { innerPadding ->
         when (selectedTab) {
-            TraderNavTab.COCKPIT -> {
+            TraderNavTab.TRADING -> {
                 CockpitScreen(
                     currentSignal = currentSignal,
-                    engineState = engineState,
                     isCapturing = isCapturing,
-                    isPaused = isPaused,
                     isAnalyzing = isAnalyzing,
                     statusMessage = statusMessage,
                     isFloatingOverlayVisible = isFloatingOverlayVisible,
-                    activeTimeframe = settings.activeTimeframe,
                     selectedInterval = settings.intervalSeconds,
-                    onTimeframeSelected = { viewModel.updateTimeframe(it) },
+                    useDirectGemini = settings.useDirectGemini,
+                    activeDataSource = activeDataSource,
+                    olympPrice = olympPrice,
+                    olympPair = olympPair,
+                    olympBalance = olympBalance,
+                    autoTradingState = autoTradingState,
+                    onSelectDataSourceMode = { viewModel.setDataSourceMode(it) },
                     onStartCapture = onRequestStartCapture,
-                    onPauseCapture = { viewModel.pauseScreenCapture() },
-                    onResumeCapture = { viewModel.resumeScreenCapture() },
                     onStopCapture = { viewModel.stopScreenCapture() },
                     onToggleFloatingOverlay = onRequestFloatingOverlay,
                     onIntervalSelected = { viewModel.updateInterval(it) },
                     onTestSampleFrame = { viewModel.analyzeSampleChart() },
+                    onStartAutoTrading = { viewModel.startAutoTrading(context) },
+                    onStopAutoTrading = { viewModel.stopAutoTrading(context) },
+                    onEmergencyStop = { viewModel.emergencyStop(context) },
+                    onCopySignal = { viewModel.copySignalToClipboard(context) },
                     modifier = Modifier.padding(innerPadding)
                 )
             }
-            TraderNavTab.HISTORY -> {
-                HistoryScreen(
-                    signals = signalHistory,
-                    onClearHistory = { viewModel.clearHistory() },
+            TraderNavTab.ENGINEER -> {
+                EngineerScreen(
+                    technicalResult = technicalResult,
+                    livePrice = olympPrice,
+                    pair = olympPair,
                     modifier = Modifier.padding(innerPadding)
                 )
             }
@@ -250,15 +255,30 @@ fun MainAppContainer(
                     modifier = Modifier.padding(innerPadding)
                 )
             }
+            TraderNavTab.HISTORY -> {
+                HistoryScreen(
+                    signals = signalHistory,
+                    onClearHistory = { viewModel.clearHistory() },
+                    modifier = Modifier.padding(innerPadding)
+                )
+            }
             TraderNavTab.SETTINGS -> {
                 SettingsScreen(
                     settings = settings,
-                    onUpdateTimeframe = { viewModel.updateTimeframe(it) },
-                    onUpdateInterval = { viewModel.updateInterval(it) },
-                    onUpdateRiskReward = { viewModel.updatePreferredRiskReward(it) },
+                    connectionTestStatus = connectionTestStatus,
+                    onUpdateBackendUrl = { viewModel.updateBackendUrl(it) },
+                    onUpdateGeminiKey = { viewModel.updateGeminiApiKey(it) },
+                    onUpdateModel = { viewModel.updateModel(it) },
+                    onUpdateUseDirect = { viewModel.updateUseDirect(it) },
                     onUpdateVibration = { viewModel.updateVibration(it) },
                     onUpdateSound = { viewModel.updateSound(it) },
-                    onResetOverlayPosition = { viewModel.resetOverlayPosition() },
+                    onUpdateOlympToken = { viewModel.updateOlympToken(it) },
+                    onUpdateOlympPair = { viewModel.updateOlympPair(it) },
+                    onClearOlympCredentials = { viewModel.clearOlympCredentials() },
+                    onConnectOlymp = { token, pair -> viewModel.connectOlympTrade(token, pair) },
+                    onDisconnectOlymp = { viewModel.disconnectOlympTrade() },
+                    onTestConnection = { viewModel.testConnection() },
+                    onClearTestStatus = { viewModel.clearConnectionTestStatus() },
                     modifier = Modifier.padding(innerPadding)
                 )
             }

@@ -2,14 +2,16 @@
 <manifest xmlns:android="http://schemas.android.com/apk/res/android"
     xmlns:tools="http://schemas.android.com/tools">
 
-    <!-- Permissions for Screen Capture, Floating Window, Network & Alerts -->
+    <!-- Permissions for Screen Capture, Floating Window, Network, WakeLock & Alerts -->
     <uses-permission android:name="android.permission.INTERNET" />
     <uses-permission android:name="android.permission.ACCESS_NETWORK_STATE" />
     <uses-permission android:name="android.permission.SYSTEM_ALERT_WINDOW" />
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE" />
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE_MEDIA_PROJECTION" />
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE_DATA_SYNC" />
     <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
     <uses-permission android:name="android.permission.VIBRATE" />
+    <uses-permission android:name="android.permission.WAKE_LOCK" />
 
     <application
         android:name=".UdaTraderApp"
@@ -35,12 +37,19 @@
             </intent-filter>
         </activity>
 
-        <!-- MediaProjection Screen Capture Foreground Service -->
+        <!-- MediaProjection Screen Capture Foreground Service (MT5 Mode) -->
         <service
             android:name=".service.ScreenCaptureService"
             android:enabled="true"
             android:exported="false"
             android:foregroundServiceType="mediaProjection" />
+
+        <!-- Olymp Trade Background Trading Foreground Service (Screen-off Mode) -->
+        <service
+            android:name=".service.OlympTradeBackgroundService"
+            android:enabled="true"
+            android:exported="false"
+            android:foregroundServiceType="dataSync" />
 
         <!-- Floating Overlay Window Service -->
         <service

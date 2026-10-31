@@ -2,7 +2,7 @@ package com.example.data.pref
 
 import android.content.Context
 import android.content.SharedPreferences
-import com.example.model.Mt5Timeframe
+import com.example.BuildConfig
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
@@ -11,52 +11,78 @@ class AppSettings(context: Context) {
     private val prefs: SharedPreferences = context.getSharedPreferences("uda_trader_prefs", Context.MODE_PRIVATE)
 
     companion object {
-        private const val KEY_TIMEFRAME = "key_active_timeframe"
+        private const val KEY_BACKEND_URL = "key_backend_url"
+        private const val KEY_GEMINI_KEY = "key_gemini_key"
+        private const val KEY_MODEL = "key_model"
         private const val KEY_INTERVAL = "key_interval"
+        private const val KEY_USE_DIRECT = "key_use_direct"
         private const val KEY_VIBRATION = "key_vibration"
         private const val KEY_SOUND = "key_sound"
-        private const val KEY_OVERLAY_X = "key_overlay_x"
-        private const val KEY_OVERLAY_Y = "key_overlay_y"
-        private const val KEY_RISK_REWARD = "key_risk_reward"
+        private const val KEY_OLYMP_TOKEN = "key_olymp_token"
+        private const val KEY_OLYMP_PAIR = "key_olymp_pair"
 
-        val DEFAULT_TIMEFRAME = Mt5Timeframe.M5
+        const val DEFAULT_BACKEND_URL = "https://uda-trader-backend.run.app/api/analyze"
+        const val DEFAULT_MODEL = "gemini-2.5-flash"
     }
 
     private val _settingsFlow = MutableStateFlow(loadSettings())
     val settingsFlow: StateFlow<SettingsState> = _settingsFlow.asStateFlow()
 
     data class SettingsState(
-        val activeTimeframe: Mt5Timeframe,
+        val backendUrl: String,
+        val geminiApiKey: String,
+        val selectedModel: String,
         val intervalSeconds: Int,
+        val useDirectGemini: Boolean,
         val vibrationEnabled: Boolean,
         val soundEnabled: Boolean,
-        val overlayX: Int,
-        val overlayY: Int,
-        val preferredRiskReward: String
+        val olympToken: String,
+        val olympPair: String
     )
 
     private fun loadSettings(): SettingsState {
-        val tfCode = prefs.getString(KEY_TIMEFRAME, DEFAULT_TIMEFRAME.code)
-        val timeframe = Mt5Timeframe.fromCode(tfCode)
+        val envKey = runCatching {
+            BuildConfig::class.java.getField("GEMINI_API_KEY").get(null) as? String
+        }.getOrNull() ?: ""
+
+        val savedKey = prefs.getString(KEY_GEMINI_KEY, "") ?: ""
+        val effectiveKey = if (savedKey.isNotBlank()) savedKey else envKey
 
         return SettingsState(
-            activeTimeframe = timeframe,
-            intervalSeconds = prefs.getInt(KEY_INTERVAL, 1).coerceIn(1, 5),
+            backendUrl = prefs.getString(KEY_BACKEND_URL, DEFAULT_BACKEND_URL) ?: DEFAULT_BACKEND_URL,
+            geminiApiKey = effectiveKey,
+            selectedModel = prefs.getString(KEY_MODEL, DEFAULT_MODEL) ?: DEFAULT_MODEL,
+            intervalSeconds = prefs.getInt(KEY_INTERVAL, 2).coerceIn(1, 10),
+            useDirectGemini = prefs.getBoolean(KEY_USE_DIRECT, true),
             vibrationEnabled = prefs.getBoolean(KEY_VIBRATION, true),
             soundEnabled = prefs.getBoolean(KEY_SOUND, true),
-            overlayX = prefs.getInt(KEY_OVERLAY_X, 40),
-            overlayY = prefs.getInt(KEY_OVERLAY_Y, 200),
-            preferredRiskReward = prefs.getString(KEY_RISK_REWARD, "1:2") ?: "1:2"
+            olympToken = prefs.getString(KEY_OLYMP_TOKEN, "") ?: "",
+            olympPair = prefs.getString(KEY_OLYMP_PAIR, "EURUSD") ?: "EURUSD"
         )
     }
 
-    fun updateTimeframe(timeframe: Mt5Timeframe) {
-        prefs.edit().putString(KEY_TIMEFRAME, timeframe.code).apply()
+    fun updateBackendUrl(url: String) {
+        prefs.edit().putString(KEY_BACKEND_URL, url.trim()).apply()
+        _settingsFlow.value = loadSettings()
+    }
+
+    fun updateGeminiApiKey(key: String) {
+        prefs.edit().putString(KEY_GEMINI_KEY, key.trim()).apply()
+        _settingsFlow.value = loadSettings()
+    }
+
+    fun updateModel(model: String) {
+        prefs.edit().putString(KEY_MODEL, model).apply()
         _settingsFlow.value = loadSettings()
     }
 
     fun updateInterval(seconds: Int) {
-        prefs.edit().putInt(KEY_INTERVAL, seconds.coerceIn(1, 5)).apply()
+        prefs.edit().putInt(KEY_INTERVAL, seconds.coerceIn(1, 10)).apply()
+        _settingsFlow.value = loadSettings()
+    }
+
+    fun updateUseDirect(useDirect: Boolean) {
+        prefs.edit().putBoolean(KEY_USE_DIRECT, useDirect).apply()
         _settingsFlow.value = loadSettings()
     }
 
@@ -70,13 +96,18 @@ class AppSettings(context: Context) {
         _settingsFlow.value = loadSettings()
     }
 
-    fun saveOverlayPosition(x: Int, y: Int) {
-        prefs.edit().putInt(KEY_OVERLAY_X, x).putInt(KEY_OVERLAY_Y, y).apply()
+    fun updateOlympToken(token: String) {
+        prefs.edit().putString(KEY_OLYMP_TOKEN, token.trim()).apply()
         _settingsFlow.value = loadSettings()
     }
 
-    fun updatePreferredRiskReward(rr: String) {
-        prefs.edit().putString(KEY_RISK_REWARD, rr).apply()
+    fun updateOlympPair(pair: String) {
+        prefs.edit().putString(KEY_OLYMP_PAIR, pair.trim().uppercase()).apply()
+        _settingsFlow.value = loadSettings()
+    }
+
+    fun clearOlympCredentials() {
+        prefs.edit().remove(KEY_OLYMP_TOKEN).apply()
         _settingsFlow.value = loadSettings()
     }
 

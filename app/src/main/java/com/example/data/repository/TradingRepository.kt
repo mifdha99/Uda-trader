@@ -8,34 +8,41 @@ import android.os.VibrationEffect
 import android.os.Vibrator
 import android.os.VibratorManager
 import android.util.Log
+import com.example.data.api.AiTraderEngine
+import com.example.data.api.AutoTradingManager
+import com.example.data.api.OlympTradeWsClient
+import com.example.data.api.UniversalSignalEngine
 import com.example.data.db.AppDatabase
 import com.example.data.db.SignalEntity
-import com.example.data.engine.UniversalSignalEngine
 import com.example.data.pref.AppSettings
+import com.example.model.AutoTradingConfig
+import com.example.model.AutoTradingState
+import com.example.model.Candle
 import com.example.model.ConfirmationType
-import com.example.model.DataVerificationLevel
-import com.example.model.EngineState
-import com.example.model.Mt5Timeframe
+import com.example.model.DataSourceMode
+import com.example.model.OlympAccountBalance
+import com.example.model.OlympOrder
 import com.example.model.SignalType
+import com.example.model.TechnicalAnalysisResult
 import com.example.model.TradingSignal
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
-import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.flow.collectLatest
 import kotlinx.coroutines.flow.map
-import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
-import kotlinx.coroutines.withContext
 
 class TradingRepository(
     private val context: Context,
     private val database: AppDatabase,
-    private val appSettings: AppSettings,
-    private val signalEngine: UniversalSignalEngine = UniversalSignalEngine()
+    val appSettings: AppSettings,
+    private val aiEngine: AiTraderEngine,
+    val olympWsClient: OlympTradeWsClient = OlympTradeWsClient(),
+    val universalSignalEngine: UniversalSignalEngine = UniversalSignalEngine()
 ) {
     companion object {
         private const val TAG = "TradingRepository"
@@ -47,7 +54,8 @@ class TradingRepository(
             return INSTANCE ?: synchronized(this) {
                 val db = AppDatabase.getInstance(context)
                 val settings = AppSettings(context)
-                val repo = TradingRepository(context.applicationContext, db, settings)
+                val engine = AiTraderEngine(settings)
+                val repo = TradingRepository(context.applicationContext, db, settings, engine)
                 INSTANCE = repo
                 repo
             }
@@ -56,92 +64,82 @@ class TradingRepository(
 
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.Default)
 
+    // Auto Trading Manager
+    val autoTradingManager = AutoTradingManager(olympWsClient, universalSignalEngine)
+
+    // Active Data Source (MT5 vs Olymp Trade)
+    val activeDataSource: StateFlow<DataSourceMode> = universalSignalEngine.activeDataSource
+
     // Current live signal
     private val _currentSignal = MutableStateFlow<TradingSignal?>(null)
     val currentSignal: StateFlow<TradingSignal?> = _currentSignal.asStateFlow()
 
-    // 10-State Engine State Tracker
-    private val _engineState = MutableStateFlow(EngineState.WAITING_CHART)
-    val engineState: StateFlow<EngineState> = _engineState.asStateFlow()
-
-    // Screen capture service status
+    // Screen capture service status (MT5 Mode)
     private val _isCapturing = MutableStateFlow(false)
     val isCapturing: StateFlow<Boolean> = _isCapturing.asStateFlow()
 
-    // Screen capture pause status
-    private val _isPaused = MutableStateFlow(false)
-    val isPaused: StateFlow<Boolean> = _isPaused.asStateFlow()
-
-    // Engine Analysis in-flight status
+    // AI Analysis in-flight status
     private val _isAnalyzing = MutableStateFlow(false)
     val isAnalyzing: StateFlow<Boolean> = _isAnalyzing.asStateFlow()
 
     // Status message for UI
-    private val _statusMessage = MutableStateFlow("Universal Signal Engine siap. Aktifkan monitor chart.")
+    private val _statusMessage = MutableStateFlow("Sistem siap. Pilih mode MT5 atau Olymp Trade.")
     val statusMessage: StateFlow<String> = _statusMessage.asStateFlow()
 
     // Floating window visibility state
     private val _isFloatingOverlayVisible = MutableStateFlow(false)
     val isFloatingOverlayVisible: StateFlow<Boolean> = _isFloatingOverlayVisible.asStateFlow()
 
-    // Timestamp tracking for expiration (>15 seconds without fresh frames)
-    private var lastFrameTimeMs: Long = 0L
+    // Indicator result from Universal Signal Engine
+    val technicalResult: StateFlow<TechnicalAnalysisResult?> = universalSignalEngine.latestTechnicalResult
+
+    // Olymp Trade live telemetry
+    val olympPrice: StateFlow<Double?> = olympWsClient.currentPrice
+    val olympPair: StateFlow<String> = olympWsClient.currentPair
+    val olympCandles: StateFlow<List<Candle>> = olympWsClient.candles
+    val olympBalance: StateFlow<OlympAccountBalance?> = olympWsClient.demoBalance
+    val autoTradingState: StateFlow<AutoTradingState> = autoTradingManager.state
+    val autoTradingOrders: StateFlow<List<OlympOrder>> = autoTradingManager.recentOrders
 
     // Signals stream from Room
     val signalHistory: Flow<List<TradingSignal>> = database.signalDao().getAllSignals()
         .map { list -> list.map { it.toDomain() } }
 
     init {
-        // Expiration monitor loop: checks every 3 seconds
+        // Observe Olymp Trade candles and feed into Universal Signal Engine
         scope.launch {
-            while (isActive) {
-                delay(3000L)
-                if (_isCapturing.value && !_isPaused.value && lastFrameTimeMs > 0L) {
-                    val elapsed = System.currentTimeMillis() - lastFrameTimeMs
-                    if (elapsed > UniversalSignalEngine.DATA_EXPIRATION_THRESHOLD_MS) {
-                        if (_engineState.value != EngineState.DATA_EXPIRED) {
-                            _engineState.value = EngineState.DATA_EXPIRED
-                            _statusMessage.value = "DATA KEDALUWARSA: Tidak ada frame chart baru selama ${elapsed / 1000} detik."
-                            _currentSignal.value = _currentSignal.value?.copy(
-                                state = EngineState.DATA_EXPIRED,
-                                reason = "DATA KEDALUWARSA: Tidak ada frame visual baru (>15s). Periksa apakah aplikasi chart tertutup atau latar belakang terhenti."
-                            )
-                        }
+            olympWsClient.candles.collectLatest { candles ->
+                if (universalSignalEngine.activeDataSource.value == DataSourceMode.OLYMP_TRADE_WS && candles.isNotEmpty()) {
+                    val pair = olympWsClient.currentPair.value
+                    val signal = universalSignalEngine.evaluateOlympTradeCandles(candles, pair, "1M")
+                    _currentSignal.value = signal
+                    _statusMessage.value = "Olymp Trade: ${signal.displaySignalText()} [Keyakinan: ${String.format("%.0f", (signal.confidence ?: 0.0) * 100)}%]"
+
+                    if (signal.confirmation == ConfirmationType.CONFIRMED && signal.signal != SignalType.WAIT) {
+                        saveSignal(signal)
+                        triggerAlert()
                     }
                 }
             }
         }
     }
 
+    fun setDataSourceMode(mode: DataSourceMode) {
+        universalSignalEngine.setDataSourceMode(mode)
+        if (mode == DataSourceMode.OLYMP_TRADE_WS) {
+            _statusMessage.value = "Mode Olymp Trade Aktif (WebSocket & Indikator Teknikal)."
+        } else {
+            _statusMessage.value = "Mode MT5 Aktif (Screen Capture & Gemini Vision)."
+        }
+    }
+
     fun setCapturing(active: Boolean) {
         _isCapturing.value = active
         if (!active) {
-            _engineState.value = EngineState.WAITING_CHART
-            _statusMessage.value = "Pemantauan dihentikan."
+            _statusMessage.value = "Screen capture dinonaktifkan."
         } else {
-            _engineState.value = EngineState.READING_CHART
-            _statusMessage.value = "Pemantauan aktif: Membaca chart visual..."
+            _statusMessage.value = "Screen capture aktif. Menunggu frame chart MT5..."
         }
-    }
-
-    fun setPaused(paused: Boolean) {
-        _isPaused.value = paused
-        if (paused) {
-            _statusMessage.value = "Pemantauan Dijeda (JEDA). Tekan Lanjut untuk membaca chart."
-        } else {
-            _statusMessage.value = "Pemantauan dilanjutkan (LANJUT)."
-        }
-    }
-
-    fun notifyStreamDisconnected() {
-        _isCapturing.value = false
-        _isPaused.value = false
-        _engineState.value = EngineState.STREAM_DISCONNECTED
-        _statusMessage.value = "LIVE SCREEN TERPUTUS: Koneksi perekaman layar berhenti."
-        _currentSignal.value = _currentSignal.value?.copy(
-            state = EngineState.STREAM_DISCONNECTED,
-            reason = "LIVE SCREEN TERPUTUS: Izin perekaman layar dihentikan oleh pengguna atau sistem."
-        )
     }
 
     fun setFloatingOverlayVisible(visible: Boolean) {
@@ -149,56 +147,87 @@ class TradingRepository(
     }
 
     /**
-     * Processes live captured frame using Universal Signal Engine.
+     * Called by ScreenCaptureService whenever a new MT5 chart frame is captured.
      */
     fun processCapturedFrame(bitmap: Bitmap) {
-        if (_isAnalyzing.value || _isPaused.value) {
-            // Drop frame if engine is busy or paused
+        if (_isAnalyzing.value) {
             return
         }
 
-        lastFrameTimeMs = System.currentTimeMillis()
-
         scope.launch {
             _isAnalyzing.value = true
-            _engineState.value = EngineState.VALIDATING_DATA
-            try {
-                val settings = appSettings.getSettings()
-                val activeTimeframe = settings.activeTimeframe
+            _statusMessage.value = "Menganalisis chart MT5 dengan Gemini AI..."
 
-                _engineState.value = EngineState.ANALYZING
+            val result = aiEngine.analyzeChart(bitmap)
 
-                val signal = withContext(Dispatchers.Default) {
-                    signalEngine.processChartFrame(bitmap, activeTimeframe)
-                }
-
+            result.onSuccess { signal ->
                 _currentSignal.value = signal
-                _engineState.value = signal.state
+                _statusMessage.value = "Sinyal MT5 diperbarui: ${signal.displaySignalText()} [${signal.pair} ${signal.timeframe}]"
 
-                if (signal.state.isActionableSignal()) {
-                    _statusMessage.value = "${signal.displaySignalText()} [${signal.formattedSymbol()} ${signal.timeframe}] - Conf: ${signal.formattedConfidence()}"
-                    database.signalDao().insertSignal(SignalEntity.fromDomain(signal))
-                    database.signalDao().trimOldSignals()
-
-                    if (signal.confirmation == ConfirmationType.CONFIRMED) {
-                        triggerAlert()
-                    }
-                } else {
-                    _statusMessage.value = signal.reason
+                if (signal.signal != SignalType.WAIT || signal.pair != "UNKNOWN") {
+                    saveSignal(signal)
                 }
-            } catch (e: Exception) {
-                Log.e(TAG, "Error in Universal Signal Engine: ${e.message}", e)
-                _engineState.value = EngineState.INVALID_DATA
-                _statusMessage.value = "DATA TIDAK VALID: ${e.localizedMessage ?: "Gagal memproses frame chart"}"
-            } finally {
-                _isAnalyzing.value = false
+
+                if (signal.confirmation == ConfirmationType.CONFIRMED &&
+                    (signal.signal == SignalType.BUY || signal.signal == SignalType.SELL)
+                ) {
+                    triggerAlert()
+                }
+            }.onFailure { error ->
+                val errorMsg = error.localizedMessage ?: "Gagal menganalisis gambar"
+                Log.e(TAG, "Analysis error: $errorMsg", error)
+                _statusMessage.value = "Error Analisis: $errorMsg"
+
+                _currentSignal.value = TradingSignal(
+                    signal = SignalType.WAIT,
+                    pair = "UNKNOWN",
+                    timeframe = "M5",
+                    entry = null,
+                    stopLoss = null,
+                    takeProfit = null,
+                    riskReward = "1:2",
+                    confidence = null,
+                    trend = "UNKNOWN",
+                    confirmation = ConfirmationType.UNCONFIRMED,
+                    reason = "Kendala koneksi/analisis: $errorMsg",
+                    timestamp = ""
+                )
             }
+
+            _isAnalyzing.value = false
         }
     }
 
-    fun updateTimeframe(timeframe: Mt5Timeframe) {
-        appSettings.updateTimeframe(timeframe)
-        _statusMessage.value = "Timeframe acuan diubah ke ${timeframe.code} (${timeframe.displayName})"
+    private fun saveSignal(signal: TradingSignal) {
+        scope.launch {
+            database.signalDao().insertSignal(SignalEntity.fromDomain(signal))
+            database.signalDao().trimOldSignals()
+        }
+    }
+
+    fun connectOlympTrade(token: String, pair: String) {
+        olympWsClient.connect(token, pair)
+    }
+
+    fun disconnectOlympTrade() {
+        olympWsClient.disconnect()
+        autoTradingManager.stopAutoTrading()
+    }
+
+    fun startAutoTrading() {
+        autoTradingManager.startAutoTrading()
+    }
+
+    fun stopAutoTrading() {
+        autoTradingManager.stopAutoTrading()
+    }
+
+    fun emergencyStopAutoTrading() {
+        autoTradingManager.emergencyStop()
+    }
+
+    fun updateAutoTradingConfig(config: AutoTradingConfig) {
+        autoTradingManager.updateConfig(config)
     }
 
     fun clearHistory() {

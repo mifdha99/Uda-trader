@@ -34,9 +34,9 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.ContentCopy
-import androidx.compose.material.icons.filled.DragHandle
 import androidx.compose.material.icons.filled.KeyboardArrowDown
 import androidx.compose.material.icons.filled.KeyboardArrowUp
+import androidx.compose.material.icons.filled.StopCircle
 import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.Icon
@@ -55,7 +55,6 @@ import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.ComposeView
-import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
@@ -71,22 +70,13 @@ import androidx.savedstate.SavedStateRegistry
 import androidx.savedstate.SavedStateRegistryController
 import androidx.savedstate.SavedStateRegistryOwner
 import androidx.savedstate.setViewTreeSavedStateRegistryOwner
-import com.example.data.pref.AppSettings
 import com.example.data.repository.TradingRepository
+import com.example.model.AutoTradingState
 import com.example.model.ConfirmationType
-import com.example.model.EngineState
+import com.example.model.DataSourceMode
 import com.example.model.SignalType
 import com.example.model.TradingSignal
 
-/**
- * Floating Overlay Window Service.
- * Features:
- * - Dedicated drag handle bar to isolate drag gestures from button clicks.
- * - Screen boundary clamping to keep HUD inside display limits.
- * - Persistent coordinate saving & restoration.
- * - Live display of 10 Engine States, verified or TIDAK DIKENALI symbols, TIDAK TERSEDIA prices.
- * - Strict COPY button conforming to Section 10 formatting rules.
- */
 class FloatingWindowService : Service() {
 
     companion object {
@@ -101,30 +91,23 @@ class FloatingWindowService : Service() {
 
     private lateinit var lifecycleOwner: ServiceSavedStateLifecycleOwner
     private lateinit var repository: TradingRepository
-    private lateinit var appSettings: AppSettings
 
-    // Drag coordination
+    // Drag coordination & screen clamping
     private var initialX = 0
     private var initialY = 0
     private var initialTouchX = 0f
     private var initialTouchY = 0f
-    private var isDragging = false
     private var screenWidth = 1080
-    private var screenHeight = 1920
+    private var screenHeight = 2400
 
     override fun onCreate() {
         super.onCreate()
         repository = TradingRepository.getInstance(this)
-        appSettings = AppSettings(this)
 
         lifecycleOwner = ServiceSavedStateLifecycleOwner()
         lifecycleOwner.onCreate()
         lifecycleOwner.onStart()
 
-        updateScreenMetrics()
-    }
-
-    private fun updateScreenMetrics() {
         val wm = getSystemService(Context.WINDOW_SERVICE) as WindowManager
         val metrics = DisplayMetrics()
         @Suppress("DEPRECATION")
@@ -160,7 +143,6 @@ class FloatingWindowService : Service() {
         if (overlayComposeView != null) return
 
         windowManager = getSystemService(Context.WINDOW_SERVICE) as WindowManager
-        updateScreenMetrics()
 
         val layoutType = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
             WindowManager.LayoutParams.TYPE_APPLICATION_OVERLAY
@@ -169,20 +151,17 @@ class FloatingWindowService : Service() {
             WindowManager.LayoutParams.TYPE_PHONE
         }
 
-        val savedSettings = appSettings.getSettings()
-        val startX = savedSettings.overlayX.coerceIn(0, (screenWidth - 260).coerceAtLeast(0))
-        val startY = savedSettings.overlayY.coerceIn(50, (screenHeight - 300).coerceAtLeast(50))
-
         layoutParams = WindowManager.LayoutParams(
             WindowManager.LayoutParams.WRAP_CONTENT,
             WindowManager.LayoutParams.WRAP_CONTENT,
             layoutType,
-            WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE,
+            WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE or
+                WindowManager.LayoutParams.FLAG_LAYOUT_NO_LIMITS,
             PixelFormat.TRANSLUCENT
         ).apply {
             gravity = Gravity.TOP or Gravity.START
-            x = startX
-            y = startY
+            x = 40
+            y = 200
         }
 
         val composeView = ComposeView(this).apply {
@@ -192,19 +171,21 @@ class FloatingWindowService : Service() {
 
             setContent {
                 val currentSignal by repository.currentSignal.collectAsState()
-                val engineState by repository.engineState.collectAsState()
                 val isCapturing by repository.isCapturing.collectAsState()
-                val isPaused by repository.isPaused.collectAsState()
                 val isAnalyzing by repository.isAnalyzing.collectAsState()
-                val settings by appSettings.settingsFlow.collectAsState()
+                val activeMode by repository.activeDataSource.collectAsState()
+                val autoTradeState by repository.autoTradingState.collectAsState()
+                val olympPrice by repository.olympPrice.collectAsState()
 
                 FloatingOverlayContent(
                     signal = currentSignal,
-                    engineState = engineState,
-                    activeTimeframe = settings.activeTimeframe.code,
                     isCapturing = isCapturing,
-                    isPaused = isPaused,
                     isAnalyzing = isAnalyzing,
+                    activeMode = activeMode,
+                    autoTradeState = autoTradeState,
+                    olympPrice = olympPrice,
+                    onCopySignal = { copySignalToClipboard(currentSignal, activeMode) },
+                    onEmergencyStop = { repository.emergencyStopAutoTrading() },
                     onClose = {
                         hideOverlay()
                         stopSelf()
@@ -213,53 +194,25 @@ class FloatingWindowService : Service() {
             }
         }
 
-        // Touch listener dedicated strictly to dragging:
-        // Only touches initiated in the top header drag-handle area trigger window moves.
-        // Clicks on buttons, copy, minimize, and close are passed through directly.
-        val dragHandleZoneHeightPx = (46 * resources.displayMetrics.density).toInt()
-
         composeView.setOnTouchListener { _, event ->
             val params = layoutParams ?: return@setOnTouchListener false
             when (event.action) {
                 MotionEvent.ACTION_DOWN -> {
-                    // Only intercept if touched in top drag handle area
-                    if (event.y <= dragHandleZoneHeightPx) {
-                        initialX = params.x
-                        initialY = params.y
-                        initialTouchX = event.rawX
-                        initialTouchY = event.rawY
-                        isDragging = false
-                        false // let Compose handle potential child buttons inside header if any
-                    } else {
-                        false
-                    }
+                    initialX = params.x
+                    initialY = params.y
+                    initialTouchX = event.rawX
+                    initialTouchY = event.rawY
+                    true
                 }
                 MotionEvent.ACTION_MOVE -> {
                     val deltaX = (event.rawX - initialTouchX).toInt()
                     val deltaY = (event.rawY - initialTouchY).toInt()
 
-                    if (Math.abs(deltaX) > 12 || Math.abs(deltaY) > 12) {
-                        isDragging = true
-                        updateScreenMetrics()
-                        // Boundary clamping: keep window fully on screen
-                        val clampedX = (initialX + deltaX).coerceIn(0, (screenWidth - 120).coerceAtLeast(120))
-                        val clampedY = (initialY + deltaY).coerceIn(40, (screenHeight - 140).coerceAtLeast(140))
-                        params.x = clampedX
-                        params.y = clampedY
-                        windowManager?.updateViewLayout(composeView, params)
-                        true
-                    } else {
-                        false
-                    }
-                }
-                MotionEvent.ACTION_UP -> {
-                    if (isDragging) {
-                        appSettings.saveOverlayPosition(params.x, params.y)
-                        isDragging = false
-                        true
-                    } else {
-                        false
-                    }
+                    // Clamp to screen bounds
+                    params.x = (initialX + deltaX).coerceIn(0, screenWidth - 200)
+                    params.y = (initialY + deltaY).coerceIn(40, screenHeight - 200)
+                    windowManager?.updateViewLayout(composeView, params)
+                    true
                 }
                 else -> false
             }
@@ -272,6 +225,20 @@ class FloatingWindowService : Service() {
         } catch (e: Exception) {
             Log.e(TAG, "Error adding overlay view: ${e.message}", e)
         }
+    }
+
+    private fun copySignalToClipboard(signal: TradingSignal?, mode: DataSourceMode) {
+        val dir = when (signal?.signal) {
+            SignalType.BUY -> "BUY / CALL (UP)"
+            SignalType.SELL -> "SELL / PUT (DOWN)"
+            else -> "WAIT"
+        }
+        val text = "UDA AI TRADER [${mode.name}]\nPair: ${signal?.pair ?: "EURUSD"}\nSinyal: $dir\nEntry: ${signal?.entry ?: "Market"}\nWaktu: ${signal?.timestamp ?: "Realtime"}"
+
+        val clipboard = getSystemService(Context.CLIPBOARD_SERVICE) as ClipboardManager
+        val clip = ClipData.newPlainText("UDA AI Trader Signal", text)
+        clipboard.setPrimaryClip(clip)
+        Toast.makeText(this, "Sinyal berhasil disalin!", Toast.LENGTH_SHORT).show()
     }
 
     private fun hideOverlay() {
@@ -298,45 +265,34 @@ class FloatingWindowService : Service() {
 @Composable
 fun FloatingOverlayContent(
     signal: TradingSignal?,
-    engineState: EngineState,
-    activeTimeframe: String,
     isCapturing: Boolean,
-    isPaused: Boolean,
     isAnalyzing: Boolean,
+    activeMode: DataSourceMode,
+    autoTradeState: AutoTradingState,
+    olympPrice: Double?,
+    onCopySignal: () -> Unit,
+    onEmergencyStop: () -> Unit,
     onClose: () -> Unit
 ) {
-    val context = LocalContext.current
     var isMinimized by remember { mutableStateOf(false) }
 
     val signalType = signal?.signal ?: SignalType.WAIT
-    val pairText = signal?.formattedSymbol() ?: "TIDAK DIKENALI"
-    val timeframe = signal?.timeframe?.ifBlank { activeTimeframe } ?: activeTimeframe
-    val entryText = signal?.formattedEntry() ?: "TIDAK TERSEDIA"
-    val stopLossText = signal?.formattedStopLoss() ?: "TIDAK TERSEDIA"
-    val takeProfitText = signal?.formattedTakeProfit() ?: "TIDAK TERSEDIA"
+    val pair = signal?.pair ?: "EURUSD"
+    val timeframe = signal?.timeframe ?: "M5"
+    val entry = if (activeMode == DataSourceMode.OLYMP_TRADE_WS && olympPrice != null) {
+        String.format("%.5f", olympPrice)
+    } else {
+        signal?.entry?.let { String.format("%.5f", it) } ?: "---"
+    }
+    val stopLoss = signal?.stopLoss?.let { String.format("%.5f", it) } ?: "---"
+    val takeProfit = signal?.takeProfit?.let { String.format("%.5f", it) } ?: "---"
     val riskReward = signal?.riskReward ?: "1:2"
-    val confidenceText = signal?.formattedConfidence() ?: "0%"
     val confirmation = signal?.confirmation ?: ConfirmationType.UNCONFIRMED
-    val updateTime = signal?.timestamp?.takeLast(8)?.replace("Z", "") ?: "--:--:--"
 
     val (signalColor, badgeBg, signalText) = when (signalType) {
-        SignalType.BUY -> Triple(Color(0xFF10B981), Color(0x3310B981), "🟢 BUY NOW")
-        SignalType.SELL -> Triple(Color(0xFFF43F5E), Color(0x33F43F5E), "🔴 SELL NOW")
+        SignalType.BUY -> Triple(Color(0xFF10B981), Color(0x3310B981), if (activeMode == DataSourceMode.OLYMP_TRADE_WS) "🟢 UP / CALL" else "🟢 BUY NOW")
+        SignalType.SELL -> Triple(Color(0xFFF43F5E), Color(0x33F43F5E), if (activeMode == DataSourceMode.OLYMP_TRADE_WS) "🔴 DOWN / PUT" else "🔴 SELL NOW")
         SignalType.WAIT -> Triple(Color(0xFFF59E0B), Color(0x33F59E0B), "🟡 WAIT")
-    }
-
-    // Engine State badge color & label
-    val (stateBadgeBg, stateBadgeColor, stateLabel) = when (engineState) {
-        EngineState.BUY -> Triple(Color(0x3310B981), Color(0xFF10B981), "BUY NOW")
-        EngineState.SELL -> Triple(Color(0x33F43F5E), Color(0xFFF43F5E), "SELL NOW")
-        EngineState.WAIT -> Triple(Color(0x33F59E0B), Color(0xFFF59E0B), "WAIT")
-        EngineState.WAITING_CHART -> Triple(Color(0x3364748B), Color(0xFF94A3B8), "MENUNGGU CHART")
-        EngineState.READING_CHART -> Triple(Color(0x330284C7), Color(0xFF38BDF8), "MEMBACA CHART")
-        EngineState.VALIDATING_DATA -> Triple(Color(0x338B5CF6), Color(0xFFA78BFA), "MEMVALIDASI DATA")
-        EngineState.ANALYZING -> Triple(Color(0x3306B6D4), Color(0xFF22D3EE), "MENGANALISIS")
-        EngineState.INVALID_DATA -> Triple(Color(0x33EF4444), Color(0xFFF87171), "DATA TIDAK VALID")
-        EngineState.STREAM_DISCONNECTED -> Triple(Color(0x33EF4444), Color(0xFFF87171), "STREAM TERPUTUS")
-        EngineState.DATA_EXPIRED -> Triple(Color(0x33F97316), Color(0xFFFB923C), "DATA KEDALUWARSA")
     }
 
     Surface(
@@ -345,14 +301,13 @@ fun FloatingOverlayContent(
             .clip(RoundedCornerShape(16.dp))
             .border(
                 width = 1.5.dp,
-                brush = Brush.linearGradient(listOf(signalColor.copy(alpha = 0.85f), Color(0xFF1E293B))),
+                brush = Brush.linearGradient(listOf(signalColor.copy(alpha = 0.8f), Color(0xFF1E293B))),
                 shape = RoundedCornerShape(16.dp)
             ),
-        color = Color(0xF2090D16),
-        shadowElevation = 10.dp
+        color = Color(0xE60B0F19),
+        shadowElevation = 8.dp
     ) {
         if (isMinimized) {
-            // Minimized Floating Pill
             Row(
                 modifier = Modifier
                     .clickable { isMinimized = false }
@@ -366,10 +321,10 @@ fun FloatingOverlayContent(
                         .background(signalColor, CircleShape)
                 )
                 Text(
-                    text = "TF: $timeframe | $signalText | $confidenceText",
+                    text = "$pair: $signalText",
                     color = Color.White,
                     fontWeight = FontWeight.Bold,
-                    fontSize = 11.sp,
+                    fontSize = 12.sp,
                     fontFamily = FontFamily.Monospace
                 )
                 Icon(
@@ -380,59 +335,40 @@ fun FloatingOverlayContent(
                 )
             }
         } else {
-            // Full Detailed Floating HUD Card
             Column(
                 modifier = Modifier
-                    .width(280.dp)
+                    .width(270.dp)
                     .padding(12.dp)
             ) {
-                // Dedicated Drag Handle Bar
-                Box(
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .padding(bottom = 6.dp),
-                    contentAlignment = Alignment.Center
-                ) {
-                    Box(
-                        modifier = Modifier
-                            .width(42.dp)
-                            .height(4.dp)
-                            .clip(RoundedCornerShape(2.dp))
-                            .background(Color(0xFF64748B))
-                    )
-                }
-
-                // Header Bar: Drag Icon + Engine State + Minimize & Close
+                // Header Bar
                 Row(
                     modifier = Modifier.fillMaxWidth(),
                     verticalAlignment = Alignment.CenterVertically,
                     horizontalArrangement = Arrangement.SpaceBetween
                 ) {
-                    Row(
-                        verticalAlignment = Alignment.CenterVertically,
-                        horizontalArrangement = Arrangement.spacedBy(6.dp)
-                    ) {
-                        Icon(
-                            imageVector = Icons.Default.DragHandle,
-                            contentDescription = "Drag Handle",
-                            tint = Color(0xFF64748B),
-                            modifier = Modifier.size(16.dp)
-                        )
-                        Box(
-                            modifier = Modifier
-                                .clip(RoundedCornerShape(6.dp))
-                                .background(stateBadgeBg)
-                                .border(1.dp, stateBadgeColor.copy(alpha = 0.5f), RoundedCornerShape(6.dp))
-                                .padding(horizontal = 6.dp, vertical = 2.dp)
-                        ) {
+                    Column {
+                        Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                            Box(
+                                modifier = Modifier
+                                    .size(8.dp)
+                                    .background(
+                                        if (isCapturing || autoTradeState == AutoTradingState.ANALYZING) Color(0xFF10B981) else Color(0xFF64748B),
+                                        CircleShape
+                                    )
+                            )
                             Text(
-                                text = stateLabel,
-                                color = stateBadgeColor,
-                                fontWeight = FontWeight.Bold,
-                                fontSize = 9.sp,
-                                letterSpacing = 0.5.sp
+                                text = "UDA AI TRADER",
+                                color = Color(0xFF38BDF8),
+                                fontWeight = FontWeight.Black,
+                                fontSize = 13.sp
                             )
                         }
+                        Text(
+                            text = if (activeMode == DataSourceMode.OLYMP_TRADE_WS) "OLYMP TRADE (WS)" else "MT5 VISION MODE",
+                            color = if (activeMode == DataSourceMode.OLYMP_TRADE_WS) Color(0xFF06B6D4) else Color(0xFF34D399),
+                            fontSize = 9.sp,
+                            fontWeight = FontWeight.Bold
+                        )
                     }
 
                     Row {
@@ -440,29 +376,19 @@ fun FloatingOverlayContent(
                             onClick = { isMinimized = true },
                             modifier = Modifier.size(24.dp)
                         ) {
-                            Icon(
-                                imageVector = Icons.Default.KeyboardArrowUp,
-                                contentDescription = "Minimize",
-                                tint = Color.LightGray,
-                                modifier = Modifier.size(18.dp)
-                            )
+                            Icon(Icons.Default.KeyboardArrowUp, contentDescription = "Minimize", tint = Color.LightGray, modifier = Modifier.size(18.dp))
                         }
                         Spacer(modifier = Modifier.width(4.dp))
                         IconButton(
                             onClick = onClose,
                             modifier = Modifier.size(24.dp)
                         ) {
-                            Icon(
-                                imageVector = Icons.Default.Close,
-                                contentDescription = "Close",
-                                tint = Color.LightGray,
-                                modifier = Modifier.size(18.dp)
-                            )
+                            Icon(Icons.Default.Close, contentDescription = "Close", tint = Color.LightGray, modifier = Modifier.size(18.dp))
                         }
                     }
                 }
 
-                Spacer(modifier = Modifier.height(6.dp))
+                Spacer(modifier = Modifier.height(8.dp))
 
                 // Primary Signal Big Badge
                 Box(
@@ -471,7 +397,7 @@ fun FloatingOverlayContent(
                         .clip(RoundedCornerShape(8.dp))
                         .background(badgeBg)
                         .border(1.dp, signalColor.copy(alpha = 0.6f), RoundedCornerShape(8.dp))
-                        .padding(vertical = 6.dp),
+                        .padding(vertical = 8.dp),
                     contentAlignment = Alignment.Center
                 ) {
                     Column(horizontalAlignment = Alignment.CenterHorizontally) {
@@ -479,40 +405,29 @@ fun FloatingOverlayContent(
                             text = signalText,
                             color = signalColor,
                             fontWeight = FontWeight.Black,
-                            fontSize = 17.sp,
+                            fontSize = 18.sp,
                             letterSpacing = 1.sp
                         )
-                        Row(
-                            horizontalArrangement = Arrangement.spacedBy(6.dp),
-                            verticalAlignment = Alignment.CenterVertically
-                        ) {
+                        if (confirmation == ConfirmationType.CONFIRMED && signalType != SignalType.WAIT) {
                             Text(
-                                text = "CONFIDENCE: $confidenceText",
-                                color = Color.White,
-                                fontSize = 10.sp,
+                                text = "TERKONFIRMASI",
+                                color = Color(0xFF34D399),
+                                fontSize = 9.sp,
                                 fontWeight = FontWeight.Bold
                             )
-                            if (confirmation == ConfirmationType.CONFIRMED && signalType != SignalType.WAIT) {
-                                Text(
-                                    text = "• TERKONFIRMASI",
-                                    color = Color(0xFF34D399),
-                                    fontSize = 9.sp,
-                                    fontWeight = FontWeight.Bold
-                                )
-                            }
                         }
                     }
                 }
 
                 Spacer(modifier = Modifier.height(8.dp))
 
-                // Data Rows: TIMEFRAME, PAIR, ENTRY, R:R
+                // Data Rows
                 Row(
                     modifier = Modifier.fillMaxWidth(),
                     horizontalArrangement = Arrangement.SpaceBetween
                 ) {
-                    MetricItem(label = "TIMEFRAME:", value = timeframe)
-                    MetricItem(label = "SIMBOL:", value = pairText)
+                    MetricItem(label = "PAIR:", value = pair)
+                    MetricItem(label = "TF:", value = timeframe)
                 }
 
                 Spacer(modifier = Modifier.height(4.dp))
@@ -521,66 +436,42 @@ fun FloatingOverlayContent(
                     modifier = Modifier.fillMaxWidth(),
                     horizontalArrangement = Arrangement.SpaceBetween
                 ) {
-                    MetricItem(label = "ENTRY:", value = entryText, highlight = true)
-                    MetricItem(label = "RISK REWARD:", value = riskReward)
-                }
-
-                Spacer(modifier = Modifier.height(4.dp))
-
-                Row(
-                    modifier = Modifier.fillMaxWidth(),
-                    horizontalArrangement = Arrangement.SpaceBetween
-                ) {
-                    MetricItem(label = "STOP LOSS:", value = stopLossText, color = Color(0xFFF87171))
-                    MetricItem(label = "TAKE PROFIT:", value = takeProfitText, color = Color(0xFF4ADE80))
+                    MetricItem(label = "ENTRY / HARGA:", value = entry, highlight = true)
+                    MetricItem(label = "R:R / DURASI:", value = riskReward)
                 }
 
                 Spacer(modifier = Modifier.height(8.dp))
 
-                // Bottom Action: COPY Button & Update Time
+                // Action Buttons: COPY & STOP
                 Row(
                     modifier = Modifier.fillMaxWidth(),
-                    horizontalArrangement = Arrangement.SpaceBetween,
-                    verticalAlignment = Alignment.CenterVertically
+                    horizontalArrangement = Arrangement.spacedBy(8.dp)
                 ) {
-                    Text(
-                        text = "Update: $updateTime",
-                        color = Color(0xFF94A3B8),
-                        fontSize = 9.sp
-                    )
+                    Button(
+                        onClick = onCopySignal,
+                        colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF1E293B), contentColor = Color(0xFF38BDF8)),
+                        shape = RoundedCornerShape(8.dp),
+                        modifier = Modifier
+                            .weight(1f)
+                            .height(34.dp)
+                    ) {
+                        Icon(Icons.Default.ContentCopy, contentDescription = "Copy", modifier = Modifier.size(14.dp))
+                        Spacer(modifier = Modifier.width(4.dp))
+                        Text("COPY", fontSize = 11.sp, fontWeight = FontWeight.Bold)
+                    }
 
                     Button(
-                        onClick = {
-                            val copyContent = signal?.formattedCopyText() ?: "[UDA AI TRADER]\nSinyal: WAIT\nStatus: MENUNGGU CHART"
-                            val clipboard = context.getSystemService(Context.CLIPBOARD_SERVICE) as ClipboardManager
-                            val clip = ClipData.newPlainText("UdaTraderSignal", copyContent)
-                            clipboard.setPrimaryClip(clip)
-                            Toast.makeText(context, "Sinyal disalin ke Clipboard!", Toast.LENGTH_SHORT).show()
-                        },
-                        colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF0284C7)),
-                        shape = RoundedCornerShape(6.dp),
-                        contentPadding = androidx.compose.foundation.layout.PaddingValues(horizontal = 10.dp, vertical = 4.dp),
-                        modifier = Modifier.height(28.dp)
+                        onClick = onEmergencyStop,
+                        colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF7F1D1D), contentColor = Color.White),
+                        shape = RoundedCornerShape(8.dp),
+                        modifier = Modifier
+                            .weight(1f)
+                            .height(34.dp)
                     ) {
-                        Icon(
-                            imageVector = Icons.Default.ContentCopy,
-                            contentDescription = "Copy",
-                            tint = Color.White,
-                            modifier = Modifier.size(12.dp)
-                        )
+                        Icon(Icons.Default.StopCircle, contentDescription = "Stop", modifier = Modifier.size(14.dp))
                         Spacer(modifier = Modifier.width(4.dp))
-                        Text("COPY", color = Color.White, fontWeight = FontWeight.Bold, fontSize = 10.sp)
+                        Text("STOP", fontSize = 11.sp, fontWeight = FontWeight.Bold)
                     }
-                }
-
-                if (isAnalyzing) {
-                    Spacer(modifier = Modifier.height(4.dp))
-                    Text(
-                        text = "⚡ Membaca chart visual...",
-                        color = Color(0xFF38BDF8),
-                        fontSize = 9.sp,
-                        fontWeight = FontWeight.Medium
-                    )
                 }
             }
         }
@@ -595,12 +486,7 @@ private fun MetricItem(
     highlight: Boolean = false
 ) {
     Column {
-        Text(
-            text = label,
-            color = Color(0xFF94A3B8),
-            fontSize = 9.sp,
-            fontWeight = FontWeight.SemiBold
-        )
+        Text(text = label, color = Color(0xFF94A3B8), fontSize = 9.sp, fontWeight = FontWeight.SemiBold)
         Text(
             text = value,
             color = if (highlight) Color(0xFF38BDF8) else color,
@@ -611,9 +497,6 @@ private fun MetricItem(
     }
 }
 
-/**
- * Service-level SavedStateRegistry and LifecycleOwner to host Jetpack Compose.
- */
 class ServiceSavedStateLifecycleOwner : LifecycleOwner, ViewModelStoreOwner, SavedStateRegistryOwner {
     private val lifecycleRegistry = LifecycleRegistry(this)
     private val store = ViewModelStore()

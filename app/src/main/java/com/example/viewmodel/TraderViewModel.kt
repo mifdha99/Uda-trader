@@ -1,23 +1,35 @@
 package com.example.viewmodel
 
 import android.app.Application
+import android.content.ClipData
+import android.content.ClipboardManager
 import android.content.Context
 import android.content.Intent
 import android.graphics.Bitmap
 import android.graphics.Canvas
 import android.graphics.Color
 import android.graphics.Paint
+import android.net.Uri
 import android.os.Build
 import android.provider.Settings
+import android.widget.Toast
 import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
+import com.example.data.api.AiTraderEngine
 import com.example.data.pref.AppSettings
 import com.example.data.repository.TradingRepository
-import com.example.model.EngineState
-import com.example.model.Mt5Timeframe
+import com.example.model.AutoTradingConfig
+import com.example.model.AutoTradingState
+import com.example.model.Candle
+import com.example.model.DataSourceMode
+import com.example.model.OlympAccountBalance
+import com.example.model.OlympOrder
 import com.example.model.RiskSettings
+import com.example.model.SignalType
+import com.example.model.TechnicalAnalysisResult
 import com.example.model.TradingSignal
 import com.example.service.FloatingWindowService
+import com.example.service.OlympTradeBackgroundService
 import com.example.service.ScreenCaptureService
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.SharingStarted
@@ -29,16 +41,32 @@ import kotlinx.coroutines.launch
 class TraderViewModel(application: Application) : AndroidViewModel(application) {
 
     private val repository = TradingRepository.getInstance(application)
-    private val appSettings = AppSettings(application)
+    private val appSettings = repository.appSettings
+    private val aiEngine = AiTraderEngine(appSettings)
 
+    // Data Source Mode
+    val activeDataSource: StateFlow<DataSourceMode> = repository.activeDataSource
+
+    // Signals and Live Analysis
     val currentSignal: StateFlow<TradingSignal?> = repository.currentSignal
-    val engineState: StateFlow<EngineState> = repository.engineState
     val isCapturing: StateFlow<Boolean> = repository.isCapturing
-    val isPaused: StateFlow<Boolean> = repository.isPaused
     val isAnalyzing: StateFlow<Boolean> = repository.isAnalyzing
     val statusMessage: StateFlow<String> = repository.statusMessage
     val isFloatingOverlayVisible: StateFlow<Boolean> = repository.isFloatingOverlayVisible
 
+    // Indicator Engine State (Engineer View)
+    val technicalResult: StateFlow<TechnicalAnalysisResult?> = repository.technicalResult
+
+    // Olymp Trade Telemetry
+    val olympPrice: StateFlow<Double?> = repository.olympPrice
+    val olympPair: StateFlow<String> = repository.olympPair
+    val olympBalance: StateFlow<OlympAccountBalance?> = repository.olympBalance
+    val olympCandles: StateFlow<List<Candle>> = repository.olympCandles
+    val autoTradingState: StateFlow<AutoTradingState> = repository.autoTradingState
+    val autoTradingOrders: StateFlow<List<OlympOrder>> = repository.autoTradingOrders
+    val autoTradingConfig: StateFlow<AutoTradingConfig> = repository.autoTradingManager.config
+
+    // History and Settings
     val signalHistory: StateFlow<List<TradingSignal>> = repository.signalHistory
         .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), emptyList())
 
@@ -47,6 +75,71 @@ class TraderViewModel(application: Application) : AndroidViewModel(application) 
     // Risk calculator state
     private val _riskSettings = MutableStateFlow(RiskSettings())
     val riskSettings: StateFlow<RiskSettings> = _riskSettings.asStateFlow()
+
+    // Test connection feedback
+    private val _connectionTestStatus = MutableStateFlow<String?>(null)
+    val connectionTestStatus: StateFlow<String?> = _connectionTestStatus.asStateFlow()
+
+    fun setDataSourceMode(mode: DataSourceMode) {
+        repository.setDataSourceMode(mode)
+    }
+
+    fun connectOlympTrade(token: String, pair: String) {
+        repository.connectOlympTrade(token, pair)
+    }
+
+    fun disconnectOlympTrade() {
+        repository.disconnectOlympTrade()
+    }
+
+    fun startAutoTrading(context: Context) {
+        val intent = Intent(context, OlympTradeBackgroundService::class.java).apply {
+            action = OlympTradeBackgroundService.ACTION_START
+        }
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+            context.startForegroundService(intent)
+        } else {
+            context.startService(intent)
+        }
+        repository.startAutoTrading()
+    }
+
+    fun stopAutoTrading(context: Context) {
+        val intent = Intent(context, OlympTradeBackgroundService::class.java).apply {
+            action = OlympTradeBackgroundService.ACTION_STOP
+        }
+        context.startService(intent)
+        repository.stopAutoTrading()
+    }
+
+    fun emergencyStop(context: Context) {
+        val intent = Intent(context, OlympTradeBackgroundService::class.java).apply {
+            action = OlympTradeBackgroundService.ACTION_STOP
+        }
+        context.startService(intent)
+        repository.emergencyStopAutoTrading()
+        Toast.makeText(context, "⚠️ EMERGENCY STOP DIJALANKAN", Toast.LENGTH_LONG).show()
+    }
+
+    fun updateAutoTradingConfig(config: AutoTradingConfig) {
+        repository.updateAutoTradingConfig(config)
+    }
+
+    fun copySignalToClipboard(context: Context) {
+        val signal = currentSignal.value
+        val pair = if (activeDataSource.value == DataSourceMode.OLYMP_TRADE_WS) olympPair.value else signal?.pair ?: "EURUSD"
+        val dir = when (signal?.signal) {
+            SignalType.BUY -> "BUY / CALL (UP)"
+            SignalType.SELL -> "SELL / PUT (DOWN)"
+            else -> "WAIT"
+        }
+        val text = "UDA AI TRADER\nPair: $pair\nSinyal: $dir\nEntry: ${signal?.entry ?: "Market"}\nKeyakinan: ${String.format("%.0f", (signal?.confidence ?: 0.0) * 100)}%\nWaktu: ${signal?.timestamp ?: "Realtime"}"
+
+        val clipboard = context.getSystemService(Context.CLIPBOARD_SERVICE) as ClipboardManager
+        val clip = ClipData.newPlainText("UDA AI Trader Signal", text)
+        clipboard.setPrimaryClip(clip)
+        Toast.makeText(context, "Sinyal $dir berhasil disalin!", Toast.LENGTH_SHORT).show()
+    }
 
     fun updateRiskBalance(balance: Double) {
         _riskSettings.value = _riskSettings.value.copy(accountBalance = balance)
@@ -82,22 +175,6 @@ class TraderViewModel(application: Application) : AndroidViewModel(application) 
         }
     }
 
-    fun pauseScreenCapture() {
-        val context = getApplication<Application>()
-        val serviceIntent = Intent(context, ScreenCaptureService::class.java).apply {
-            action = ScreenCaptureService.ACTION_PAUSE
-        }
-        context.startService(serviceIntent)
-    }
-
-    fun resumeScreenCapture() {
-        val context = getApplication<Application>()
-        val serviceIntent = Intent(context, ScreenCaptureService::class.java).apply {
-            action = ScreenCaptureService.ACTION_RESUME
-        }
-        context.startService(serviceIntent)
-    }
-
     fun stopScreenCapture() {
         val context = getApplication<Application>()
         val serviceIntent = Intent(context, ScreenCaptureService::class.java).apply {
@@ -126,86 +203,92 @@ class TraderViewModel(application: Application) : AndroidViewModel(application) 
         context.startService(serviceIntent)
     }
 
-    fun updateTimeframe(timeframe: Mt5Timeframe) {
-        repository.updateTimeframe(timeframe)
+    fun testConnection() {
+        viewModelScope.launch {
+            _connectionTestStatus.value = "Menghubungi endpoint..."
+            val result = aiEngine.testConnection()
+            result.onSuccess { msg ->
+                _connectionTestStatus.value = "SUKSES: $msg"
+            }.onFailure { err ->
+                _connectionTestStatus.value = "GAGAL: ${err.localizedMessage}"
+            }
+        }
     }
 
+    fun clearConnectionTestStatus() {
+        _connectionTestStatus.value = null
+    }
+
+    fun updateOlympToken(token: String) = appSettings.updateOlympToken(token)
+    fun updateOlympPair(pair: String) = appSettings.updateOlympPair(pair)
+    fun clearOlympCredentials() = appSettings.clearOlympCredentials()
+
+    fun updateBackendUrl(url: String) = appSettings.updateBackendUrl(url)
+    fun updateGeminiApiKey(key: String) = appSettings.updateGeminiApiKey(key)
+    fun updateModel(model: String) = appSettings.updateModel(model)
     fun updateInterval(seconds: Int) = appSettings.updateInterval(seconds)
-    fun updatePreferredRiskReward(rr: String) = appSettings.updatePreferredRiskReward(rr)
+    fun updateUseDirect(direct: Boolean) = appSettings.updateUseDirect(direct)
     fun updateVibration(enabled: Boolean) = appSettings.updateVibration(enabled)
     fun updateSound(enabled: Boolean) = appSettings.updateSound(enabled)
-    fun resetOverlayPosition() = appSettings.saveOverlayPosition(40, 200)
 
     fun clearHistory() = repository.clearHistory()
 
-    /**
-     * Explicit DEMO / SIMULATION TEST mode: generates synthetic chart bitmap to test engine logic locally.
-     * Clearly flagged as demo/simulated to differentiate from Live Screen capture.
-     */
     fun analyzeSampleChart() {
         viewModelScope.launch {
-            val sampleBitmap = createSyntheticTestChart()
+            val sampleBitmap = createSyntheticMt5Chart()
             repository.processCapturedFrame(sampleBitmap)
         }
     }
 
-    private fun createSyntheticTestChart(): Bitmap {
-        val width = 900
-        val height = 700
+    private fun createSyntheticMt5Chart(): Bitmap {
+        val width = 800
+        val height = 600
         val bitmap = Bitmap.createBitmap(width, height, Bitmap.Config.ARGB_8888)
         val canvas = Canvas(bitmap)
 
-        // Dark chart background
-        val bgPaint = Paint().apply { color = Color.rgb(11, 15, 25) }
+        val bgPaint = Paint().apply { color = Color.rgb(16, 20, 29) }
         canvas.drawRect(0f, 0f, width.toFloat(), height.toFloat(), bgPaint)
 
-        // Subtle grid
         val gridPaint = Paint().apply {
             color = Color.rgb(28, 35, 51)
             strokeWidth = 1f
         }
-        for (y in 80 until height - 60 step 60) {
-            canvas.drawLine(30f, y.toFloat(), width - 110f, y.toFloat(), gridPaint)
+        for (y in 50 until height step 50) {
+            canvas.drawLine(0f, y.toFloat(), width.toFloat(), y.toFloat(), gridPaint)
         }
-        for (x in 40 until width - 110 step 70) {
-            canvas.drawLine(x.toFloat(), 80f, x.toFloat(), height - 60f, gridPaint)
+        for (x in 50 until width step 60) {
+            canvas.drawLine(x.toFloat(), 0f, x.toFloat(), height.toFloat(), gridPaint)
         }
 
-        // Header text indicating test mode
         val textPaint = Paint().apply {
             color = Color.WHITE
-            textSize = 24f
+            textSize = 28f
             isAntiAlias = true
         }
-        canvas.drawText("[SIMULASI / DEMO] Institutional Candlestick Test Canvas", 40f, 45f, textPaint)
+        canvas.drawText("EURUSD, M5 - MetaTrader 5 Institutional Chart", 30f, 45f, textPaint)
 
-        // Draw 18 synthetic candlesticks establishing an institutional breakout
-        val greenCandle = Paint().apply { color = Color.rgb(16, 185, 129); isAntiAlias = true }
-        val redCandle = Paint().apply { color = Color.rgb(244, 63, 94); isAntiAlias = true }
-        val wickPaint = Paint().apply { color = Color.rgb(200, 210, 220); strokeWidth = 2f }
+        val pricePaint = Paint().apply {
+            color = Color.rgb(0, 200, 255)
+            textSize = 22f
+            isAntiAlias = true
+        }
+        canvas.drawText("Bid: 1.08520  Ask: 1.08530  Spread: 10", 30f, 80f, pricePaint)
+
+        val greenCandle = Paint().apply { color = Color.rgb(16, 185, 129); strokeWidth = 8f }
+        val redCandle = Paint().apply { color = Color.rgb(244, 63, 94); strokeWidth = 8f }
+        val wickPaint = Paint().apply { color = Color.WHITE; strokeWidth = 2f }
 
         val candleData = listOf(
-            Triple(420f, 440f, 410f to 455f),
-            Triple(435f, 460f, 425f to 470f),
-            Triple(460f, 440f, 430f to 475f),
-            Triple(440f, 410f, 395f to 450f),
-            Triple(410f, 425f, 400f to 435f),
-            Triple(425f, 390f, 380f to 430f),
-            Triple(390f, 370f, 360f to 400f),
-            Triple(370f, 385f, 365f to 395f),
-            Triple(385f, 360f, 350f to 390f),
-            Triple(360f, 340f, 330f to 370f),
-            Triple(340f, 310f, 300f to 350f),
-            Triple(310f, 325f, 305f to 335f),
-            Triple(325f, 290f, 280f to 330f),
-            Triple(290f, 260f, 250f to 300f),
-            Triple(260f, 240f, 230f to 270f),
-            Triple(240f, 255f, 235f to 265f),
-            Triple(255f, 210f, 200f to 260f), // Strong expansion breakout
-            Triple(210f, 180f, 170f to 220f)  // Bullish continuation
+            Triple(280f, 320f, 250f to 340f),
+            Triple(290f, 330f, 270f to 350f),
+            Triple(320f, 280f, 260f to 330f),
+            Triple(280f, 240f, 230f to 290f),
+            Triple(240f, 260f, 230f to 270f),
+            Triple(250f, 210f, 200f to 260f),
+            Triple(210f, 180f, 170f to 220f)
         )
 
-        var xOffset = 50f
+        var xOffset = 80f
         for (candle in candleData) {
             val (open, close, wicks) = candle
             val isBullish = close < open
@@ -214,18 +297,20 @@ class TraderViewModel(application: Application) : AndroidViewModel(application) 
             canvas.drawLine(xOffset, wicks.first, xOffset, wicks.second, wickPaint)
             val top = minOf(open, close)
             val bottom = maxOf(open, close)
-            canvas.drawRect(xOffset - 10f, top, xOffset + 10f, bottom, paint)
-
-            xOffset += 44f
+            canvas.drawRect(xOffset - 12f, top, xOffset + 12f, bottom, paint)
+            xOffset += 85f
         }
 
-        // Support/Resistance line
         val srPaint = Paint().apply {
-            color = Color.rgb(56, 189, 248)
+            color = Color.YELLOW
             strokeWidth = 2f
             style = Paint.Style.STROKE
         }
-        canvas.drawLine(40f, 340f, width - 110f, 340f, srPaint)
+        canvas.drawLine(50f, 280f, 750f, 280f, srPaint)
+        canvas.drawText("Support / Order Block Zone (1.08450)", 400f, 270f, Paint().apply {
+            color = Color.YELLOW
+            textSize = 16f
+        })
 
         return bitmap
     }
